@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  srt-restreamer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: srt-restreamer:latest
+    container_name: srt-restreamer
+
+    # Host network mode is required for SRT UDP ports
+    # All SRT ports (input/output) are exposed directly on host
+    network_mode: host
+
+    volumes:
+      - ./data:/app/data
+
+    environment:
+      - DATABASE_URL=sqlite:///data/restreamer.db
+      - DATA_DIR=/app/data
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production-12345}
+      - UVICORN_HOST=0.0.0.0
+      - UVICORN_PORT=8080
+
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
