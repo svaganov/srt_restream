@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SRT Restreamer Dashboard</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=5">
+    <link rel="stylesheet" href="/static/css/style.css?v=13">
 </head>
 <body>
     <div class="app">
@@ -32,9 +32,14 @@
         <main class="main">
             <div class="toolbar">
                 <h2>Input Streams</h2>
-                <button class="btn-primary" onclick="showAddInputModal()">
-                    <span class="icon">+</span> Add Input Stream
-                </button>
+                <div class="toolbar-actions">
+                    <button class="btn-secondary" onclick="exportConfig()">Export Config</button>
+                    <button class="btn-secondary" onclick="document.getElementById('importConfigInput').click()">Import Config</button>
+                    <input type="file" id="importConfigInput" accept="application/json,.json" style="display:none" onchange="importConfig(this)">
+                    <button class="btn-primary" onclick="showAddInputModal()">
+                        <span class="icon">+</span> Add Input Stream
+                    </button>
+                </div>
             </div>
 
             <div class="streams-grid" id="streamsContainer">
@@ -160,6 +165,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=5"></script>
+    <script src="/static/js/app.js?v=8"></script>
 </body>
 </html>

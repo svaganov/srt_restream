@@ -124,7 +124,6 @@ body {
 /* Main */
 .main {
     padding: 32px;
-    max-width: 1400px;
     margin: 0 auto;
 }
 
@@ -138,6 +137,12 @@ body {
 .toolbar h2 {
     font-size: 24px;
     font-weight: 700;
+}
+
+.toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
 /* Buttons */
@@ -187,9 +192,9 @@ body {
     background: var(--success);
     color: #fff;
     border: none;
-    padding: 8px 16px;
+    padding: 6px 12px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
@@ -204,9 +209,9 @@ body {
     background: var(--danger);
     color: #fff;
     border: none;
-    padding: 8px 16px;
+    padding: 6px 12px;
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
@@ -218,8 +223,8 @@ body {
 }
 
 .btn-icon {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -229,7 +234,7 @@ body {
     color: var(--text-muted);
     cursor: pointer;
     transition: all 0.2s;
-    font-size: 16px;
+    font-size: 14px;
 }
 
 .btn-icon:hover {
@@ -240,9 +245,36 @@ body {
 
 /* Streams Grid */
 .streams-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
-    gap: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.stream-card {
+    flex: 1 1 calc(25% - 16px);
+    min-width: 260px;
+    max-width: 100%;
+}
+
+@media (max-width: 1400px) {
+    .stream-card {
+        flex: 1 1 calc(33.333% - 16px);
+        min-width: 260px;
+    }
+}
+
+@media (max-width: 1100px) {
+    .stream-card {
+        flex: 1 1 calc(50% - 16px);
+        min-width: 260px;
+    }
+}
+
+@media (max-width: 600px) {
+    .stream-card {
+        flex: 1 1 100%;
+        min-width: 0;
+    }
 }
 
 /* Stream Card */
@@ -264,9 +296,10 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 20px;
+    padding: 12px 16px;
     border-bottom: 1px solid var(--border-color);
     background: var(--bg-secondary);
+    gap: 10px;
 }
 
 .card-title {
@@ -278,13 +311,14 @@ body {
 .status-badge {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
+    gap: 5px;
+    padding: 3px 8px;
     border-radius: 20px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    flex-shrink: 0;
 }
 
 .status-badge.connected {
@@ -327,22 +361,24 @@ body {
 .card-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 /* Card Body */
 .card-body {
-    padding: 20px;
+    padding: 16px;
 }
 
 .thumbnail-container {
     position: relative;
     width: 100%;
-    height: 180px;
+    height: 140px;
     background: var(--bg-secondary);
     border-radius: 8px;
     overflow: hidden;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
 }
 
 .thumbnail-container img {
@@ -462,11 +498,13 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 12px;
+    padding: 8px 10px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 8px;
     transition: all 0.2s;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .output-item:hover {
@@ -477,20 +515,21 @@ body {
 .output-info {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     flex: 1;
-    min-width: 0;
+    min-width: 160px;
+    overflow: hidden;
 }
 
 .output-info .name {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-primary);
-    min-width: 80px;
-    max-width: 180px;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex-shrink: 1;
 }
 
 .output-info .mode-badge {
@@ -507,9 +546,10 @@ body {
 .output-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     flex-shrink: 0;
-    margin-left: 12px;
+    margin-left: 8px;
+    justify-content: flex-end;
 }
 
 /* Empty State */
@@ -675,9 +715,6 @@ body {
 
 /* Responsive */
 @media (max-width: 768px) {
-    .streams-grid {
-        grid-template-columns: 1fr;
-    }
     .main { padding: 16px; }
     .header { padding: 0 16px; }
     .stream-info { grid-template-columns: 1fr; }

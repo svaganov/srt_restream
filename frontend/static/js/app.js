@@ -210,6 +210,74 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// ==================== IMPORT / EXPORT ====================
+
+async function exportConfig() {
+    const token = getToken();
+    try {
+        const res = await fetch(`${API_BASE}/export`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res) return;
+        if (res.status === 401) {
+            logout();
+            return;
+        }
+        if (!res.ok) {
+            showToast('Failed to export configuration', 'error');
+            return;
+        }
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'restreamer-config.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        showToast('Configuration exported');
+    } catch (err) {
+        showToast('Connection error', 'error');
+    }
+}
+
+async function importConfig(input) {
+    const file = input.files[0];
+    input.value = '';
+    if (!file) return;
+
+    const mode = confirm('Replace existing configuration?\nOK = replace all streams\nCancel = append to existing streams')
+        ? 'replace'
+        : 'append';
+
+    const token = getToken();
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const res = await fetch(`${API_BASE}/import?mode=${mode}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+        });
+        if (res.status === 401) {
+            logout();
+            return;
+        }
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            showToast(data.detail || 'Failed to import configuration', 'error');
+            return;
+        }
+        const data = await res.json();
+        showToast(`Imported ${data.created_inputs} inputs, ${data.created_outputs} outputs`);
+        loadStreams();
+    } catch (err) {
+        showToast('Connection error', 'error');
+    }
+}
+
 // ==================== ACTIONS ====================
 async function startInput(id) {
     const res = await apiRequest(`/inputs/${id}/start`, { method: 'POST' });

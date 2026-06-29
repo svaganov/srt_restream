@@ -1,5 +1,5 @@
 """API Routes for SRT Restreamer"""
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status, WebSocket, WebSocketDisconnect
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -11,7 +11,7 @@ from auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES, authenticate_user
 )
 from stream_manager import stream_manager
-from datetime import timedelta
+from datetime import datetime, timedelta
 import os
 import json
 import asyncio
@@ -243,6 +243,30 @@ class OutputStreamResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+class OutputConfig(BaseModel):
+    name: str
+    srt_url: str
+    mode: str = "caller"
+
+
+class InputConfig(BaseModel):
+    name: str
+    srt_url: str
+    outputs: List[OutputConfig] = []
+
+
+class ConfigExport(BaseModel):
+    version: int = 1
+    exported_at: str
+    inputs: List[InputConfig]
+
+
+class ConfigImport(BaseModel):
+    version: int = 1
+    exported_at: Optional[str] = None
+    inputs: List[InputConfig]
+
 @router.get("/outputs/{input_id}", response_model=List[OutputStreamResponse])
 def get_outputs(input_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     outputs = db.query(OutputStream).filter(OutputStream.input_stream_id == input_id).all()
@@ -415,3 +439,134 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         pass
     except Exception as e:
         pass
+
+
+# ============ IMPORT / EXPORT ============
+
+@router.get("/export")
+def export_config(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """Download all inputs and their outputs as a JSON configuration file."""
+    inputs = db.query(InputStream).order_by(InputStream.id).all()
+    data = {
+        "version": 1,
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "inputs": []
+    }
+    for inp in inputs:
+        data["inputs"].append({
+            "name": inp.name,
+            "srt_url": inp.srt_url,
+            "outputs": [
+                {
+                    "name": out.name,
+                    "srt_url": out.srt_url,
+                    "mode": out.mode
+                }
+                for out in inp.outputs
+            ]
+        })
+
+    content = json.dumps(data, indent=2, ensure_ascii=False)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": "attachment; filename=restreamer-config.json"
+        }
+    )
+
+
+@router.post("/import")
+def import_config(
+    file: UploadFile = File(...),
+    mode: str = Query("append", regex="^(append|replace)$"),
+    start: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Upload a JSON configuration file to create inputs and outputs.
+
+    mode=append  - add new inputs/outputs to existing ones (default)
+    mode=replace - delete existing inputs/outputs and replace them with the file
+    start=true   - automatically start all imported inputs and outputs
+    """
+    try:
+        raw = file.file.read()
+        payload = json.loads(raw)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+    finally:
+        file.file.close()
+
+    try:
+        config = ConfigImport(**payload)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid config format: {e}")
+
+    if mode == "replace":
+        # Stop all running streams before removing them
+        existing = db.query(InputStream).all()
+        for inp in existing:
+            stream_manager.stop_input(inp.id)
+            for out in inp.outputs:
+                stream_manager.stop_output(out.id)
+        db.query(OutputStream).delete()
+        db.query(InputStream).delete()
+        db.commit()
+        # Clean up stale slate images
+        try:
+            for fname in os.listdir(stream_manager.slates_dir):
+                fpath = os.path.join(stream_manager.slates_dir, fname)
+                if os.path.isfile(fpath):
+                    os.remove(fpath)
+        except Exception:
+            pass
+
+    created_inputs = 0
+    created_outputs = 0
+    started_inputs = 0
+    started_outputs = 0
+    new_inputs = []
+
+    for item in config.inputs:
+        inp = InputStream(name=item.name, srt_url=item.srt_url)
+        db.add(inp)
+        db.flush()
+        created_inputs += 1
+        new_inputs.append(inp)
+
+        for out_cfg in item.outputs:
+            out = OutputStream(
+                input_stream_id=inp.id,
+                name=out_cfg.name,
+                srt_url=out_cfg.srt_url,
+                mode=out_cfg.mode
+            )
+            db.add(out)
+            created_outputs += 1
+
+    db.commit()
+
+    if start:
+        for inp in new_inputs:
+            if stream_manager.start_input(inp.id, inp.srt_url):
+                inp.is_active = True
+                inp.thumbnail_path = os.path.join(
+                    stream_manager.thumbnails_dir, f"input_{inp.id}.jpg"
+                )
+                started_inputs += 1
+
+                for out in inp.outputs:
+                    if stream_manager.start_output(inp.id, out.id, out.srt_url):
+                        out.is_active = True
+                        started_outputs += 1
+        db.commit()
+
+    return {
+        "message": "Configuration imported successfully",
+        "mode": mode,
+        "created_inputs": created_inputs,
+        "created_outputs": created_outputs,
+        "started_inputs": started_inputs,
+        "started_outputs": started_outputs
+    }
