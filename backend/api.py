@@ -1,5 +1,5 @@
 """API Routes for SRT Restreamer"""
-from fastapi import APIRouter, Depends, HTTPException, Query, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status, WebSocket, WebSocketDisconnect
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -135,16 +135,13 @@ def start_input(stream_id: int, db: Session = Depends(get_db), current_user = De
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
 
-    # Generate UDP relay address (high port range to avoid SRT port conflicts)
-    udp_relay = f"127.0.0.1:{30000 + stream_id}"
-
-    if stream_manager.start_input(stream_id, stream.srt_url, udp_relay):
+    if stream_manager.start_input(stream_id, stream.srt_url):
         stream.is_active = True
         stream.thumbnail_path = os.path.join(
             stream_manager.thumbnails_dir, f"input_{stream_id}.jpg"
         )
         db.commit()
-        return {"message": "Input stream started", "udp_relay": udp_relay}
+        return {"message": "Input stream started"}
     else:
         raise HTTPException(status_code=500, detail="Failed to start stream")
 
@@ -183,6 +180,41 @@ def get_thumbnail(stream_id: int, current_user = Depends(get_current_user_for_th
         from fastapi.responses import FileResponse
         return FileResponse(path, media_type="image/jpeg")
     raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+
+@router.post("/inputs/{stream_id}/slate")
+def upload_slate(stream_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    stream = db.query(InputStream).filter(InputStream.id == stream_id).first()
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files are allowed")
+
+    os.makedirs(stream_manager.slates_dir, exist_ok=True)
+    path = os.path.join(stream_manager.slates_dir, f"input_{stream_id}.jpg")
+    try:
+        contents = file.file.read()
+        with open(path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save slate: {e}")
+    finally:
+        file.file.close()
+
+    return {"message": "Slate image updated"}
+
+
+@router.delete("/inputs/{stream_id}/slate")
+def delete_slate(stream_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    stream = db.query(InputStream).filter(InputStream.id == stream_id).first()
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    path = os.path.join(stream_manager.slates_dir, f"input_{stream_id}.jpg")
+    if os.path.exists(path):
+        os.remove(path)
+    return {"message": "Slate image removed, using default NO SIGNAL"}
 
 # ============ OUTPUT STREAMS ============
 
@@ -289,9 +321,7 @@ def start_output(output_id: int, db: Session = Depends(get_db), current_user = D
     if not stream or not stream.is_active:
         raise HTTPException(status_code=400, detail="Input stream is not active")
 
-    udp_source = f"127.0.0.1:{30000 + stream.id}"
-
-    if stream_manager.start_output(stream.id, output_id, out.srt_url, udp_source):
+    if stream_manager.start_output(stream.id, output_id, out.srt_url):
         out.is_active = True
         db.commit()
         return {"message": "Output stream started"}

@@ -311,6 +311,12 @@ body {
     border: 1px solid rgba(229, 62, 62, 0.3);
 }
 
+.status-badge.slate {
+    background: rgba(128, 90, 213, 0.15);
+    color: #b794f6;
+    border: 1px solid rgba(128, 90, 213, 0.3);
+}
+
 .status-badge .dot {
     width: 6px;
     height: 6px;

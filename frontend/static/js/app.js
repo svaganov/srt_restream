@@ -127,6 +127,9 @@ function renderStreamCard(stream) {
                         `<button class="btn-stop" onclick="stopInput(${stream.id})">Stop</button>` :
                         `<button class="btn-start" onclick="startInput(${stream.id})">Start</button>`
                     }
+                    <input type="file" id="slate-input-${stream.id}" accept="image/*" style="display:none" onchange="uploadSlate(${stream.id}, this)">
+                    <button class="btn-icon" onclick="document.getElementById('slate-input-${stream.id}').click()" title="Upload slate">🖼</button>
+                    <button class="btn-icon" onclick="deleteSlate(${stream.id})" title="Remove slate">🚫</button>
                     <button class="btn-icon" onclick="editInput(${stream.id})" title="Edit">✎</button>
                     <button class="btn-icon" onclick="deleteInput(${stream.id})" title="Delete">🗑</button>
                 </div>
@@ -236,6 +239,37 @@ async function deleteInput(id) {
         loadStreams();
     } else {
         showToast('Failed to delete stream', 'error');
+    }
+}
+
+async function uploadSlate(id, input) {
+    if (!input.files.length) return;
+    const token = getToken();
+    const formData = new FormData();
+    formData.append('file', input.files[0]);
+    try {
+        const res = await fetch(`${API_BASE}/inputs/${id}/slate`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+        });
+        if (res && res.ok) {
+            showToast('Slate image updated');
+        } else {
+            showToast('Failed to upload slate', 'error');
+        }
+    } catch (err) {
+        showToast('Failed to upload slate', 'error');
+    }
+    input.value = '';
+}
+
+async function deleteSlate(id) {
+    const res = await apiRequest(`/inputs/${id}/slate`, { method: 'DELETE' });
+    if (res && res.ok) {
+        showToast('Slate image removed');
+    } else {
+        showToast('Failed to remove slate', 'error');
     }
 }
 
