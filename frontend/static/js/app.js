@@ -2,6 +2,7 @@
 const API_BASE = '/api';
 let ws = null;
 let streamsData = [];
+let lastStatsData = null;
 
 // ==================== AUTH ====================
 function getToken() {
@@ -167,6 +168,20 @@ function renderStreamCard(stream) {
                         ${renderOutputsList(stream.id)}
                     </div>
                 </div>
+
+                ${stream.srt_url && stream.srt_url.toLowerCase().startsWith('srt://') ? `
+                <div class="srt-stats-section" id="srt-stats-section-${stream.id}">
+                    <div class="srt-stats-header" onclick="toggleSrtStats(${stream.id})">
+                        <span class="srt-stats-icon" id="srt-stats-icon-${stream.id}">▶</span>
+                        <h4>SRT Statistics</h4>
+                    </div>
+                    <div class="srt-stats-body" id="srt-stats-body-${stream.id}" style="display:none">
+                        <div class="srt-stats-content" id="srt-stats-${stream.id}">
+                            <div class="srt-stats-empty">Start the input to collect SRT statistics</div>
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
             </div>
         </div>
     `;
@@ -566,6 +581,7 @@ function updateWsStatus(state) {
 }
 
 function updateStats(statsData) {
+    lastStatsData = statsData;
     statsData.forEach(item => {
         const bitrateEl = document.getElementById(`bitrate-${item.input_id}`);
         const fpsEl = document.getElementById(`fps-${item.input_id}`);
@@ -598,7 +614,89 @@ function updateStats(statsData) {
                 }
             });
         }
+
+        // Update SRT statistics (render only when section is expanded to avoid churn)
+        const srtBody = document.getElementById(`srt-stats-body-${item.input_id}`);
+        if (srtBody && srtBody.style.display !== 'none' && item.input_srt_stats) {
+            renderSrtStats(item.input_id, item.input_srt_stats);
+        }
     });
+}
+
+// ==================== SRT STATISTICS ====================
+
+const SRT_LABELS = {
+    state: 'State',
+    peer_version: 'Peer Version',
+    peer_endpoint: 'Peer Endpoint',
+    local_endpoint: 'Local Endpoint',
+    peer_address: 'Peer Address',
+    peer_port: 'Peer Port',
+    local_address: 'Local Address',
+    local_port: 'Local Port',
+    encryption: 'Encryption',
+    authentication: 'Authentication',
+    reconnections: 'Reconnections',
+    lost_packets: 'Lost Packets',
+    recovered_packets: 'Recovered Packets',
+    skipped_packets: 'Skipped Packets',
+    sent_acks: 'Sent ACKs',
+    sent_naks: 'Sent NAKs',
+    link_bandwidth_kbps: 'Link Bandwidth (kbps)',
+    recv_rate_mbps: 'Receive Rate (Mbps)',
+    rtt_ms: 'RTT (ms)',
+    local_buffer_ms: 'Local Buffer (ms)',
+    latency_ms: 'Latency (ms)',
+    raw_packets_received: 'Packets Received',
+    raw_packets_unique: 'Packets Unique',
+    proxy_status: 'Proxy Status',
+    proxy_message: 'Proxy Message',
+    proxy_uptime: 'Proxy Uptime (s)'
+};
+
+function toggleSrtStats(inputId) {
+    const body = document.getElementById(`srt-stats-body-${inputId}`);
+    const icon = document.getElementById(`srt-stats-icon-${inputId}`);
+    if (!body || !icon) return;
+    const isHidden = body.style.display === 'none';
+    body.style.display = isHidden ? 'block' : 'none';
+    icon.textContent = isHidden ? '▼' : '▶';
+
+    if (isHidden && lastStatsData) {
+        const item = lastStatsData.find(i => i.input_id === inputId);
+        if (item && item.input_srt_stats) {
+            renderSrtStats(inputId, item.input_srt_stats);
+        }
+    }
+}
+
+function renderSrtStats(inputId, stats) {
+    const container = document.getElementById(`srt-stats-${inputId}`);
+    if (!container) return;
+
+    if (!stats || Object.keys(stats).length === 0) {
+        container.innerHTML = '<div class="srt-stats-empty">No SRT statistics available</div>';
+        return;
+    }
+
+    const rows = Object.entries(stats)
+        .filter(([key, value]) => value !== '' && value !== null && value !== undefined)
+        .map(([key, value]) => {
+            const label = SRT_LABELS[key] || key;
+            let displayValue = value;
+            if (typeof value === 'number' && Number.isInteger(value) === false) {
+                displayValue = value.toFixed(3);
+            }
+            return `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(String(displayValue))}</td></tr>`;
+        })
+        .join('');
+
+    if (!rows) {
+        container.innerHTML = '<div class="srt-stats-empty">No SRT statistics available</div>';
+        return;
+    }
+
+    container.innerHTML = `<table class="srt-stats-table"><tbody>${rows}</tbody></table>`;
 }
 
 // ==================== INIT ====================

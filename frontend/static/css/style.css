@@ -720,3 +720,69 @@ body {
     .stream-info { grid-template-columns: 1fr; }
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+
+/* SRT Statistics Section */
+.srt-stats-section {
+    margin-top: 16px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 12px;
+}
+
+.srt-stats-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-secondary);
+}
+
+.srt-stats-header:hover {
+    color: var(--text-primary);
+}
+
+.srt-stats-icon {
+    font-size: 12px;
+    transition: transform 0.2s;
+}
+
+.srt-stats-header h4 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 0;
+}
+
+.srt-stats-body {
+    margin-top: 10px;
+}
+
+.srt-stats-empty {
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 12px;
+}
+
+.srt-stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.srt-stats-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.srt-stats-table td:first-child {
+    color: var(--text-muted);
+    width: 55%;
+}
+
+.srt-stats-table td:last-child {
+    color: var(--text-primary);
+    font-family: 'Courier New', monospace;
+    text-align: right;
+}

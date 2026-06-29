@@ -363,6 +363,17 @@ def stop_output(output_id: int, db: Session = Depends(get_db), current_user = De
     db.commit()
     return {"message": "Output stopped"}
 
+# ============ SRT STATISTICS ============
+
+@router.get("/inputs/{stream_id}/srt-stats")
+def get_input_srt_stats(stream_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """Get detailed SRT statistics for an input (requires active SRT proxy)."""
+    stream = db.query(InputStream).filter(InputStream.id == stream_id).first()
+    if not stream:
+        raise HTTPException(status_code=404, detail="Stream not found")
+    return stream_manager.get_input_srt_stats(stream_id)
+
+
 # ============ STATS & WS ============
 
 @router.get("/stats")
@@ -388,6 +399,7 @@ def get_stats(db: Session = Depends(get_db), current_user = Depends(get_current_
             "input_status": inp_status["status"],
             "input_message": inp_status["message"],
             "input_stats": inp_status["stats"],
+            "input_srt_stats": stream_manager.get_input_srt_stats(inp.id),
             "outputs": out_stats
         })
     return stats
@@ -429,12 +441,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                         "input_status": inp_status["status"],
                         "input_message": inp_status["message"],
                         "input_stats": inp_status["stats"],
+                        "input_srt_stats": stream_manager.get_input_srt_stats(inp.id),
                         "outputs": out_stats
                     })
                 await websocket.send_json({"type": "stats", "data": data})
             finally:
                 db.close()
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
     except WebSocketDisconnect:
         pass
     except Exception as e:

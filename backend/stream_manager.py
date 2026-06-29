@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
+from srt_input_proxy import SrtInputProxy, SRT_LIVE_TRANSMIT
+
 
 class FFmpegProcess:
     def __init__(self, stream_id: int, cmd: list, is_input: bool = True):
@@ -348,6 +350,7 @@ class StreamManager:
         self.input_processes: Dict[int, FFmpegProcess] = {}
         self.output_processes: Dict[int, FFmpegProcess] = {}
         self.slate_processes: Dict[int, FFmpegProcess] = {}
+        self.srt_proxies: Dict[int, SrtInputProxy] = {}
         self.mixers: Dict[int, UDPFeedMixer] = {}
         self.splitters: Dict[int, UDPSplitter] = {}
         self.input_configs: Dict[int, dict] = {}   # store params for auto-restart
@@ -359,11 +362,15 @@ class StreamManager:
         self._monitor_thread.start()
 
     # Internal UDP port layout (per input stream id)
-    # 30000+id : live feed from SRT input
+    # 30000+id : raw SRT proxy output (when SRT proxy is used)
+    # 30100+id : live feed read by the mixer
     # 31000+id : slate feed
     # 32000+id : mixed feed read by outputs
-    def _live_port(self, stream_id: int) -> int:
+    def _raw_live_port(self, stream_id: int) -> int:
         return 30000 + stream_id
+
+    def _live_port(self, stream_id: int) -> int:
+        return 30100 + stream_id
 
     def _slate_port(self, stream_id: int) -> int:
         return 31000 + stream_id
@@ -391,13 +398,31 @@ class StreamManager:
                 return path
         return None
 
-    def build_input_cmd(self, stream_id: int, srt_url: str) -> list:
+    @staticmethod
+    def _is_srt_url(url: str) -> bool:
+        return url.lower().startswith("srt://")
+
+    @staticmethod
+    def _url_has_passphrase(url: str) -> bool:
+        try:
+            from urllib.parse import urlparse, parse_qs
+            return bool(parse_qs(urlparse(url).query).get("passphrase"))
+        except Exception:
+            return False
+
+    def build_input_cmd(self, stream_id: int, srt_url: str, use_proxy: bool = False) -> list:
         """Build FFmpeg command for input stream (passthrough + thumbnail)"""
         thumbnail_path = self._thumbnail_path(stream_id)
         live_addr = f"127.0.0.1:{self._live_port(stream_id)}"
+        if use_proxy:
+            # Proxy already delivers SRT to the raw live port; FFmpeg forwards it
+            # to the mixer input port and produces the thumbnail.
+            input_url = f"udp://127.0.0.1:{self._raw_live_port(stream_id)}?fifo_size=1000000&overrun_nonfatal=1"
+        else:
+            input_url = srt_url
         return [
             "ffmpeg", "-y", "-fflags", "nobuffer", "-flags", "low_delay",
-            "-i", srt_url,
+            "-i", input_url,
             "-c", "copy", "-f", "mpegts", f"udp://{live_addr}?pkt_size=1316",
             "-map", "0:v", "-vf", "fps=1/3,scale=320:-1",
             "-update", "1", "-q:v", "2", thumbnail_path
@@ -488,16 +513,38 @@ class StreamManager:
                 else:
                     del self.input_processes[stream_id]
 
-            cmd = self.build_input_cmd(stream_id, srt_url)
+            use_proxy = (
+                self._is_srt_url(srt_url)
+                and SRT_LIVE_TRANSMIT.exists()
+                and not self._url_has_passphrase(srt_url)
+            )
+
+            if use_proxy:
+                proxy = self.srt_proxies.get(stream_id)
+                if not proxy or not proxy.is_alive():
+                    proxy = SrtInputProxy(stream_id, srt_url, self._raw_live_port(stream_id))
+                    if not proxy.start():
+                        print(f"[SRT PROXY] Failed to start proxy for input {stream_id}")
+                        return False
+                    self.srt_proxies[stream_id] = proxy
+                    print(f"[SRT PROXY] Started proxy for input {stream_id}")
+
+            cmd = self.build_input_cmd(stream_id, srt_url, use_proxy=use_proxy)
             proc = FFmpegProcess(stream_id, cmd, is_input=True)
             if proc.start():
                 self.input_processes[stream_id] = proc
                 # Remember config for auto-restart on disconnect
                 self.input_configs[stream_id] = {
                     "srt_url": srt_url,
-                    "restart_attempts": 0
+                    "restart_attempts": 0,
+                    "use_proxy": use_proxy
                 }
                 return True
+
+            # If FFmpeg failed and we started a proxy, tear it down so it doesn't spin
+            if use_proxy and stream_id in self.srt_proxies:
+                self.srt_proxies[stream_id].stop()
+                del self.srt_proxies[stream_id]
             return False
 
     def stop_input(self, stream_id: int):
@@ -505,6 +552,9 @@ class StreamManager:
             if stream_id in self.input_processes:
                 self.input_processes[stream_id].stop()
                 del self.input_processes[stream_id]
+            if stream_id in self.srt_proxies:
+                self.srt_proxies[stream_id].stop()
+                del self.srt_proxies[stream_id]
             self._stop_slate(stream_id)
             if stream_id in self.mixers:
                 self.mixers[stream_id].stop()
@@ -584,6 +634,17 @@ class StreamManager:
                 }
             return {"status": "disconnected", "message": "Not running", "stats": {}}
 
+    def get_input_srt_stats(self, stream_id: int) -> dict:
+        with self._lock:
+            proxy = self.srt_proxies.get(stream_id)
+            if proxy:
+                return proxy.get_stats()
+            return {
+                "state": "Inactive",
+                "proxy_status": "disconnected",
+                "proxy_message": "SRT proxy not running"
+            }
+
     def get_output_status(self, output_id: int) -> dict:
         with self._lock:
             if output_id not in self.output_processes:
@@ -616,6 +677,13 @@ class StreamManager:
                         if proc.status == "connected" and time.time() - proc.last_activity > 30:
                             proc.status = "warning"
                             proc.status_message = "No data received"
+
+                    # If the SRT proxy died, the input must be restarted as well
+                    cfg = self.input_configs.get(sid, {})
+                    if cfg.get("use_proxy"):
+                        proxy = self.srt_proxies.get(sid)
+                        if not proxy or not proxy.is_alive():
+                            process_exited = True
 
                     if process_exited and sid in self.input_configs:
                         to_restart.append(("input", sid))
