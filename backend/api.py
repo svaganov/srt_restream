@@ -44,6 +44,27 @@ def register(user: UserCreate, db: Session = Depends(get_db), current_user = Dep
     db.commit()
     return {"message": "User created"}
 
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=6)
+
+
+@router.post("/auth/change-password")
+def change_password(
+    data: PasswordChange,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    from models import User
+    if not verify_password(data.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if data.current_password == data.new_password:
+        raise HTTPException(status_code=400, detail="New password must differ from the current password")
+    current_user.hashed_password = get_password_hash(data.new_password)
+    db.commit()
+    return {"message": "Password updated successfully"}
+
 # ============ INPUT STREAMS ============
 
 class InputStreamCreate(BaseModel):

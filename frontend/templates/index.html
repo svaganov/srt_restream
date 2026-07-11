@@ -24,6 +24,7 @@
                     <span class="dot"></span>
                     <span class="text">Connecting...</span>
                 </div>
+                <button class="btn-secondary btn-small" onclick="showChangePasswordModal()">Change Password</button>
                 <button class="btn-logout" onclick="logout()">Logout</button>
             </div>
         </header>
@@ -165,6 +166,35 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=8"></script>
+    <!-- Change Password Modal -->
+    <div class="modal" id="changePasswordModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Change Password</h3>
+                <button class="btn-close" onclick="closeModal('changePasswordModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Current Password</label>
+                    <input type="password" id="currentPassword" placeholder="Enter current password">
+                </div>
+                <div class="form-group">
+                    <label>New Password</label>
+                    <input type="password" id="newPassword" placeholder="Enter new password">
+                </div>
+                <div class="form-group">
+                    <label>Confirm New Password</label>
+                    <input type="password" id="confirmPassword" placeholder="Confirm new password">
+                </div>
+                <div class="error" id="changePasswordError" style="display:none; color:#ff6b6b; margin-top:10px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeModal('changePasswordModal')">Cancel</button>
+                <button class="btn-primary" onclick="changePassword()">Update Password</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js?v=9"></script>
 </body>
 </html>
