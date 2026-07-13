@@ -7,6 +7,7 @@ import signal
 import re
 import socket
 import select
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
@@ -36,6 +37,7 @@ class FFmpegProcess:
             "dup": 0
         }
         self._stop_event = threading.Event()
+        self._last_stderr = deque(maxlen=30)
 
     def start(self):
         if self.process and self.process.poll() is None:
@@ -92,6 +94,7 @@ class FFmpegProcess:
 
             self.last_activity = time.time()
             line = line.strip()
+            self._last_stderr.append(line)
 
             # Parse FFmpeg progress stats (real data is flowing)
             if "bitrate=" in line:
@@ -132,6 +135,9 @@ class FFmpegProcess:
         if not self._stop_event.is_set():
             self.status = "disconnected"
             self.status_message = "Process exited unexpectedly"
+            print(f"[FFMPEG {self.stream_id}] Unexpected exit. Last stderr lines:")
+            for l in self._last_stderr:
+                print(f"    {l}")
 
         self.process = None
 
@@ -170,11 +176,14 @@ class UDPFeedMixer:
     live feed is forwarded; otherwise slate feed keeps outputs alive.
     """
 
-    def __init__(self, stream_id: int, live_port: int, slate_port: int, mixed_port: int):
+    def __init__(self, stream_id: int, live_port: int, slate_port: int, mixed_port: int,
+                 on_live_start=None, on_live_lost=None):
         self.stream_id = stream_id
         self.live_port = live_port
         self.slate_port = slate_port
         self.mixed_port = mixed_port
+        self.on_live_start = on_live_start
+        self.on_live_lost = on_live_lost
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.live_active = False
@@ -196,6 +205,7 @@ class UDPFeedMixer:
     def _open_rx(self, port: int) -> socket.socket:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)
         sock.setblocking(False)
         sock.bind(("0.0.0.0", port))
         return sock
@@ -212,15 +222,22 @@ class UDPFeedMixer:
 
         while not self._stop_event.is_set():
             try:
-                readable, _, _ = select.select([live_sock, slate_sock], [], [], 0.05)
+                readable, _, _ = select.select([live_sock, slate_sock], [], [], 0.01)
             except Exception:
                 continue
 
             now = time.time()
-            # Timeout live selection after 1 second of silence
-            if self.live_active and now - self.last_live_time > 1.0:
+            # Timeout live selection after 2 seconds of silence. Live sources
+            # often have brief glitches; a longer timeout avoids unnecessary
+            # output disruptions while still switching to slate quickly enough.
+            if self.live_active and now - self.last_live_time > 2.0:
                 self.live_active = False
                 print(f"[MIXER {self.stream_id}] Live lost, switching to slate")
+                if self.on_live_lost:
+                    try:
+                        self.on_live_lost(self.stream_id)
+                    except Exception as e:
+                        print(f"[MIXER {self.stream_id}] on_live_lost error: {e}")
 
             for sock in readable:
                 try:
@@ -232,6 +249,11 @@ class UDPFeedMixer:
                     if not self.live_active:
                         self.live_active = True
                         print(f"[MIXER {self.stream_id}] Live feed detected")
+                        if self.on_live_start:
+                            try:
+                                self.on_live_start(self.stream_id)
+                            except Exception as e:
+                                print(f"[MIXER {self.stream_id}] on_live_start error: {e}")
                     try:
                         out_sock.sendto(data, out_addr)
                     except Exception:
@@ -297,6 +319,7 @@ class UDPSplitter:
         try:
             in_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             in_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            in_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)
             in_sock.setblocking(False)
             in_sock.bind(("0.0.0.0", self.mixed_port))
             out_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -306,7 +329,7 @@ class UDPSplitter:
 
         while not self._stop_event.is_set():
             try:
-                readable, _, _ = select.select([in_sock], [], [], 0.05)
+                readable, _, _ = select.select([in_sock], [], [], 0.01)
             except Exception:
                 continue
 
@@ -360,6 +383,10 @@ class StreamManager:
         # Start background monitor
         self._monitor_thread = threading.Thread(target=self._health_check_loop, daemon=True)
         self._monitor_thread.start()
+
+        # Fast watcher for output listeners whose consumer disconnected
+        self._output_watcher_thread = threading.Thread(target=self._output_idle_watcher, daemon=True)
+        self._output_watcher_thread.start()
 
     # Internal UDP port layout (per input stream id)
     # 30000+id : raw SRT proxy output (when SRT proxy is used)
@@ -424,7 +451,7 @@ class StreamManager:
             "ffmpeg", "-y", "-fflags", "nobuffer", "-flags", "low_delay",
             "-i", input_url,
             "-c", "copy", "-f", "mpegts", f"udp://{live_addr}?pkt_size=1316",
-            "-map", "0:v", "-vf", "fps=1/3,scale=320:-1",
+            "-map", "0:v", "-vf", "fps=1/3,scale=320:-1,format=yuvj420p",
             "-update", "1", "-q:v", "2", thumbnail_path
         ]
 
@@ -436,12 +463,12 @@ class StreamManager:
 
         # 1280x720 30fps slate with silent stereo audio
         if os.path.exists(slate_image):
-            video_input = ["-re", "-loop", "1", "-framerate", "30", "-i", slate_image]
-            video_filter = "format=yuv420p,scale=1280:720"
+            video_input = ["-f", "image2", "-loop", "1", "-framerate", "30", "-i", slate_image]
+            video_filter = "fps=30,format=yuv420p,scale=1280:720:flags=lanczos"
         else:
             # Default: plain black background. User can upload a custom image with text.
-            video_input = ["-re", "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30"]
-            video_filter = "format=yuv420p"
+            video_input = ["-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30"]
+            video_filter = "fps=30,format=yuv420p"
 
         return [
             "ffmpeg", "-y",
@@ -449,20 +476,28 @@ class StreamManager:
             "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
             "-vf", video_filter,
             "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-            "-pix_fmt", "yuv420p", "-r", "30", "-b:v", "2000k",
+            "-pix_fmt", "yuv420p", "-r", "30", "-g", "25", "-keyint_min", "25",
+            "-b:v", "2000k",
             "-c:a", "aac", "-b:a", "128k",
             "-f", "mpegts", f"udp://127.0.0.1:{slate_port}?pkt_size=1316",
-            "-map", "0:v", "-vf", "fps=1/3,scale=320:-1",
+            "-map", "0:v", "-vf", "fps=1/3,scale=320:-1,format=yuvj420p",
             "-update", "1", "-q:v", "2", thumbnail_path
         ]
 
     def build_output_cmd(self, stream_id: int, output_id: int, srt_url: str) -> list:
-        """Build FFmpeg command for output stream"""
+        """Build FFmpeg command for output stream.
+
+        The mixed feed is already MPEG-TS. We restart the output on every
+        slate/live switch so the SRT listener starts with a fresh, consistent
+        stream and consumers see the correct source.
+        """
         out_addr = f"127.0.0.1:{33000 + output_id}"
         return [
             "ffmpeg", "-y", "-fflags", "nobuffer", "-flags", "low_delay",
+            "-thread_queue_size", "512",
             "-i", f"udp://{out_addr}?fifo_size=1000000&overrun_nonfatal=1",
-            "-c", "copy", "-f", "mpegts", srt_url
+            "-c", "copy",
+            "-f", "mpegts", srt_url
         ]
 
     def _ensure_mixer(self, stream_id: int):
@@ -471,7 +506,9 @@ class StreamManager:
                 stream_id,
                 self._live_port(stream_id),
                 self._slate_port(stream_id),
-                self._mixed_port(stream_id)
+                self._mixed_port(stream_id),
+                on_live_start=self._on_live_start,
+                on_live_lost=self._on_live_lost
             )
             mixer.start()
             self.mixers[stream_id] = mixer
@@ -481,6 +518,83 @@ class StreamManager:
             splitter = UDPSplitter(stream_id, self._mixed_port(stream_id))
             splitter.start()
             self.splitters[stream_id] = splitter
+
+    def _on_live_start(self, stream_id: int):
+        """Restart outputs so they start a fresh live stream.
+
+        Stop the slate generator so it does not overwrite the live thumbnail.
+        Output restarts run in a background thread so the mixer loop is not
+        blocked and the SRT listener can accept the consumer on a fresh stream.
+        """
+        print(f"[LIVE] Live restored for input {stream_id}, refreshing outputs")
+        self._stop_slate(stream_id)
+        self._restart_outputs_for_stream_async(stream_id)
+
+    def _on_live_lost(self, stream_id: int):
+        """Restart outputs so they start a fresh slate stream.
+
+        The SRT listener in FFmpeg accepts only one caller. After a source
+        switch the old listener can stop accepting callers, so we respawn it.
+        The input listener is also refreshed so it can accept a reconnect.
+        """
+        print(f"[SLATE] Live lost for input {stream_id}, refreshing outputs and input listener")
+        self._restart_outputs_for_stream_async(stream_id)
+        threading.Thread(target=self._restart_input, args=(stream_id,), daemon=True).start()
+
+    def _restart_outputs_for_stream_async(self, stream_id: int):
+        with self._lock:
+            outputs_to_restart = [
+                oid for oid, cfg in self.output_configs.items()
+                if cfg.get("stream_id") == stream_id
+            ]
+        if not outputs_to_restart:
+            return
+        threading.Thread(
+            target=lambda: [self._restart_output(oid) for oid in outputs_to_restart],
+            daemon=True
+        ).start()
+
+    def _restart_output(self, output_id: int) -> bool:
+        with self._lock:
+            cfg = self.output_configs.get(output_id)
+            if not cfg:
+                return False
+            stream_id = cfg["stream_id"]
+            srt_url = cfg["srt_url"]
+            if output_id in self.output_processes:
+                self.output_processes[output_id].stop()
+                del self.output_processes[output_id]
+        # Give the OS a moment to release the SRT listener port
+        time.sleep(0.2)
+        with self._lock:
+            cfg["restart_attempts"] = 0
+            cmd = self.build_output_cmd(stream_id, output_id, srt_url)
+            proc = FFmpegProcess(output_id, cmd, is_input=False)
+            if proc.start():
+                self.output_processes[output_id] = proc
+                print(f"[LIVE] Restarted output {output_id}")
+                return True
+        return False
+
+    def _restart_input(self, stream_id: int) -> bool:
+        """Stop and restart the input FFmpeg so it can accept a new SRT caller."""
+        with self._lock:
+            cfg = self.input_configs.get(stream_id)
+            if not cfg:
+                return False
+            srt_url = cfg["srt_url"]
+            if stream_id in self.input_processes:
+                self.input_processes[stream_id].stop()
+                del self.input_processes[stream_id]
+        # Give the OS time to release the SRT listener port before respawning
+        time.sleep(0.3)
+        with self._lock:
+            # Abort if the input was stopped/deleted while we were sleeping
+            cfg = self.input_configs.get(stream_id)
+            if not cfg:
+                return False
+            cfg["restart_attempts"] = 0
+        return self.start_input(stream_id, srt_url)
 
     def _start_slate(self, stream_id: int) -> bool:
         if stream_id in self.slate_processes:
@@ -505,6 +619,9 @@ class StreamManager:
     def start_input(self, stream_id: int, srt_url: str) -> bool:
         with self._lock:
             self._ensure_mixer(stream_id)
+            # Start slate immediately so the mixer has a feed to forward
+            # before the live SRT caller connects.
+            self._start_slate(stream_id)
 
             if stream_id in self.input_processes:
                 proc = self.input_processes[stream_id]
@@ -657,10 +774,30 @@ class StreamManager:
                 "uptime": (datetime.now() - proc.start_time).total_seconds() if proc.start_time else 0
             }
 
+    def _output_idle_watcher(self):
+        """Restart output listeners that have gone idle.
+
+        FFmpeg SRT listener accepts one caller and then stops accepting new
+        connections after that caller disconnects, while the process keeps
+        running. By watching bitrate activity we can detect a lost consumer
+        and respawn the listener quickly.
+        """
+        while True:
+            time.sleep(2)
+            stale = []
+            now = time.time()
+            with self._lock:
+                for oid, proc in list(self.output_processes.items()):
+                    if proc.last_data_time is not None and (now - proc.last_data_time > 4.0):
+                        stale.append(oid)
+            for oid in stale:
+                print(f"[WATCHER] Output {oid} idle for >4s, restarting listener")
+                self._restart_output(oid)
+
     def _health_check_loop(self):
         """Background health monitoring and auto-restart"""
         while True:
-            time.sleep(5)
+            time.sleep(1)
             to_restart = []
             with self._lock:
                 # Check inputs
@@ -688,13 +825,18 @@ class StreamManager:
                     if process_exited and sid in self.input_configs:
                         to_restart.append(("input", sid))
 
-                    # Keep slate running while source is not actually connected
-                    if sid in self.input_configs and proc.status != "connected":
+                    # Keep slate running whenever the live feed is not currently
+                    # active. The mixer switches to slate after 1s of silence,
+                    # so we need a slate feed ready regardless of FFmpeg's
+                    # connection state (SRT listener may stay "connected" even
+                    # when the source stops sending data).
+                    mixer = self.mixers.get(sid)
+                    if mixer and not mixer.live_active:
                         self._ensure_mixer(sid)
                         if self._start_slate(sid):
                             print(f"[SLATE] Slate active for input {sid}")
-                    elif proc.status == "connected":
-                        self._stop_slate(sid)
+                    # Keep slate running while the input is active so output
+                    # restarts always have a fallback feed available.
 
                 # Check outputs
                 for oid, proc in list(self.output_processes.items()):
@@ -712,6 +854,12 @@ class StreamManager:
                             proc.status_message = "No data received"
 
                     if process_exited and oid in self.output_configs:
+                        to_restart.append(("output", oid))
+                    elif proc.process and proc.last_data_time is not None and (time.time() - proc.last_data_time > 6.0):
+                        # The consumer probably disconnected. The FFmpeg SRT listener
+                        # sometimes stops accepting new callers after a disconnect
+                        # while the process keeps running. Restart it.
+                        print(f"[HEALTH] Output {oid} idle for >6s, consumer likely lost")
                         to_restart.append(("output", oid))
 
             # Restart outside the lock to avoid deadlocks

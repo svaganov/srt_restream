@@ -30,7 +30,7 @@ Each input and output runs as an independent FFmpeg process so that a failure in
 
 ## Repository state
 
-- Branch: `main`
+- Branch: `working-state`
 - Remote: `origin` → `https://github.com/svaganov/srt_restream.git`
 - Tracked files: backend, frontend, Docker files, README.md, LICENSE, `.vscode/`, AGENTS.md
 - Untracked files: none (excluding runtime data and `.env`)
@@ -75,10 +75,12 @@ docker-compose up --build
 
 The dashboard is available at `http://localhost:8080/login`.
 
-Default credentials (intentionally left as-is; will be changed later):
+Default credentials (intentionally left as-is; change them on first login):
 
 - Username: `admin`
 - Password: `admin`
+
+You can change the admin password from the dashboard header (`Change Password`) or via `POST /api/auth/change-password`.
 
 ### Local development (without Docker)
 
@@ -115,11 +117,12 @@ No automated test suite exists yet. Manual testing workflow:
 
 1. Start the application (Docker or local).
 2. Log in with default credentials.
-3. Create an input stream, e.g. `srt://0.0.0.0:5000?mode=listener&latency=200`.
-4. Start the input stream.
-5. Publish an SRT stream to that endpoint (e.g. from OBS or FFmpeg).
-6. Add one or more output streams and start them.
-7. Verify consumers receive the stream and the dashboard stats update via WebSocket.
+3. Change the default admin password via the `Change Password` button in the dashboard header.
+4. Create an input stream, e.g. `srt://0.0.0.0:5000?mode=listener&latency=200`.
+5. Start the input stream.
+6. Publish an SRT stream to that endpoint (e.g. from OBS or FFmpeg).
+7. Add one or more output streams and start them.
+8. Verify consumers receive the stream and the dashboard stats update via WebSocket.
 
 For low-latency verification, launch the consumer with low-latency flags, because `ffplay` buffers network streams by default and can add several seconds of perceived delay:
 
@@ -130,7 +133,8 @@ ffplay -fflags nobuffer -flags low_delay "srt://127.0.0.1:6002?mode=caller&laten
 ## Security considerations
 
 - JWT secret key must be changed in production via `SECRET_KEY` env var.
-- Default admin credentials are currently hardcoded and must be changed before any production use.
+- Default admin credentials are currently hardcoded and must be changed before any production use. A password-change UI and API endpoint are available.
+- Password changes require the current password; new passwords must be at least 6 characters and different from the current password.
 - WebSocket connections require a valid JWT token passed as a query parameter (`?token=...`).
 - The application uses Docker `network_mode: host` so SRT UDP ports are bound directly on the host.
 - Do not commit API keys, certificates, passwords, or `.env` files.

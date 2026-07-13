@@ -23,6 +23,60 @@ function logout() {
     window.location.href = '/login';
 }
 
+function showChangePasswordModal() {
+    document.getElementById('currentPassword').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('confirmPassword').value = '';
+    const errorEl = document.getElementById('changePasswordError');
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+    }
+    showModal('changePasswordModal');
+}
+
+async function changePassword() {
+    const current = document.getElementById('currentPassword').value;
+    const newPass = document.getElementById('newPassword').value;
+    const confirm = document.getElementById('confirmPassword').value;
+    const errorEl = document.getElementById('changePasswordError');
+
+    if (!current || !newPass || !confirm) {
+        errorEl.textContent = 'All fields are required';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (newPass.length < 6) {
+        errorEl.textContent = 'New password must be at least 6 characters';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (newPass === current) {
+        errorEl.textContent = 'New password must differ from the current password';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (newPass !== confirm) {
+        errorEl.textContent = 'New passwords do not match';
+        errorEl.style.display = 'block';
+        return;
+    }
+
+    const res = await apiRequest('/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ current_password: current, new_password: newPass })
+    });
+
+    if (res && res.ok) {
+        showToast('Password updated successfully', 'success');
+        closeModal('changePasswordModal');
+    } else {
+        const data = res ? await res.json().catch(() => ({})) : {};
+        errorEl.textContent = data.detail || 'Failed to update password';
+        errorEl.style.display = 'block';
+    }
+}
+
 async function apiRequest(endpoint, options = {}) {
     const token = getToken();
     const defaults = {
