@@ -104,47 +104,16 @@
         <form id="loginForm">
             <div class="form-group">
                 <label>Username</label>
-                <input type="text" id="username" placeholder="admin" required>
+                <input type="text" id="username" required autocomplete="username">
             </div>
             <div class="form-group">
                 <label>Password</label>
-                <input type="password" id="password" placeholder="admin" required>
+                <input type="password" id="password" required autocomplete="current-password">
             </div>
             <button type="submit">Sign In</button>
             <div class="error" id="error"></div>
         </form>
     </div>
-    <script>
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const errorEl = document.getElementById('error');
-
-            try {
-                const formData = new URLSearchParams();
-                formData.append('username', username);
-                formData.append('password', password);
-
-                const res = await fetch('/api/auth/login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                    body: formData
-                });
-
-                if (res.ok) {
-                    const data = await res.json();
-                    localStorage.setItem('token', data.access_token);
-                    window.location.href = '/';
-                } else {
-                    errorEl.textContent = 'Invalid credentials';
-                    errorEl.classList.add('show');
-                }
-            } catch (err) {
-                errorEl.textContent = 'Connection error';
-                errorEl.classList.add('show');
-            }
-        });
-    </script>
+    <script src="/static/js/login.js"></script>
 </body>
 </html>

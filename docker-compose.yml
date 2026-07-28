@@ -8,9 +8,11 @@ services:
     image: srt-restreamer:latest
     container_name: srt-restreamer
 
-    # Host network mode is required for SRT UDP ports
-    # All SRT ports (input/output) are exposed directly on host
-    network_mode: host
+    # Publish only the web UI and the allowed SRT listener port range.
+    # Internal media-plane UDP ports stay on loopback inside the container.
+    ports:
+      - "8080:8080"
+      - "5000-5999:5000-5999/udp"
 
     volumes:
       - ./data:/app/data
@@ -18,15 +20,28 @@ services:
     environment:
       - DATABASE_URL=sqlite:///data/restreamer.db
       - DATA_DIR=/app/data
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production-12345}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set}
+      - SECRETS_KEY=${SECRETS_KEY:?SECRETS_KEY must be set}
+      - APP_BASE_URL=${APP_BASE_URL:-}
+      - SRT_LISTENER_PORT_RANGE=${SRT_LISTENER_PORT_RANGE:-5000-5999}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-true}
       - UVICORN_HOST=0.0.0.0
       - UVICORN_PORT=8080
 
+    # Hardening
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
     restart: unless-stopped
 
-    # Health check
+    # Health check against unauthenticated liveness endpoint
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/stats"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3

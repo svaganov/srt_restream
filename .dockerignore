@@ -1,0 +1,65 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Data and runtime state
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+*.egg-info/
+build/
+dist/
+
+# Tests and dev tooling
+backend/tests/
+requirements-dev.txt
+pytest.ini
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docs and audits not needed at runtime
+*.md
+!README.md
+Change PLAN.md
+pip-audit-*.json
+pip-audit-*.log
+
+# Docker artifacts themselves
+Dockerfile
+docker-compose*.yml
+.dockerignore

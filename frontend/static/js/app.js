@@ -1,95 +1,83 @@
-/* SRT Restreamer Dashboard Frontend */
+/* SRT Restreamer Dashboard Frontend
+ *
+ * Security model:
+ * - Authentication is a server-side opaque session in an HttpOnly cookie.
+ *   No token is ever stored in localStorage or placed in a URL.
+ * - Mutating requests carry the CSRF token read from the `csrf_token`
+ *   (non-HttpOnly) cookie in the `X-CSRF-Token` header.
+ * - All dynamic content is built with DOM methods and textContent.
+ *   No innerHTML with dynamic data, no inline event handlers.
+ */
 const API_BASE = '/api';
 let ws = null;
 let streamsData = [];
 let lastStatsData = null;
 
-// ==================== AUTH ====================
-function getToken() {
-    return localStorage.getItem('token');
+// ==================== CSRF ====================
+function getCookie(name) {
+    const prefix = name + '=';
+    for (const part of document.cookie.split(';')) {
+        const trimmed = part.trim();
+        if (trimmed.startsWith(prefix)) {
+            return decodeURIComponent(trimmed.slice(prefix.length));
+        }
+    }
+    return null;
 }
 
-function checkAuth() {
-    const token = getToken();
-    if (!token) {
+function getCsrfToken() {
+    return getCookie('csrf_token');
+}
+
+// ==================== AUTH ====================
+async function checkAuth() {
+    try {
+        const res = await fetch(`${API_BASE}/auth/me`, { credentials: 'same-origin' });
+        if (res.status === 401) {
+            window.location.href = '/login';
+            return false;
+        }
+        return res.ok;
+    } catch (err) {
         window.location.href = '/login';
         return false;
     }
-    return true;
 }
 
-function logout() {
-    localStorage.removeItem('token');
+async function logout() {
+    try {
+        await fetch(`${API_BASE}/auth/logout`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'X-CSRF-Token': getCsrfToken() || '' }
+        });
+    } catch (err) {
+        // Best effort; session may already be gone.
+    }
     window.location.href = '/login';
 }
 
-function showChangePasswordModal() {
-    document.getElementById('currentPassword').value = '';
-    document.getElementById('newPassword').value = '';
-    document.getElementById('confirmPassword').value = '';
-    const errorEl = document.getElementById('changePasswordError');
-    if (errorEl) {
-        errorEl.textContent = '';
-        errorEl.style.display = 'none';
-    }
-    showModal('changePasswordModal');
-}
-
-async function changePassword() {
-    const current = document.getElementById('currentPassword').value;
-    const newPass = document.getElementById('newPassword').value;
-    const confirm = document.getElementById('confirmPassword').value;
-    const errorEl = document.getElementById('changePasswordError');
-
-    if (!current || !newPass || !confirm) {
-        errorEl.textContent = 'All fields are required';
-        errorEl.style.display = 'block';
-        return;
-    }
-    if (newPass.length < 6) {
-        errorEl.textContent = 'New password must be at least 6 characters';
-        errorEl.style.display = 'block';
-        return;
-    }
-    if (newPass === current) {
-        errorEl.textContent = 'New password must differ from the current password';
-        errorEl.style.display = 'block';
-        return;
-    }
-    if (newPass !== confirm) {
-        errorEl.textContent = 'New passwords do not match';
-        errorEl.style.display = 'block';
-        return;
-    }
-
-    const res = await apiRequest('/auth/change-password', {
-        method: 'POST',
-        body: JSON.stringify({ current_password: current, new_password: newPass })
-    });
-
-    if (res && res.ok) {
-        showToast('Password updated successfully', 'success');
-        closeModal('changePasswordModal');
-    } else {
-        const data = res ? await res.json().catch(() => ({})) : {};
-        errorEl.textContent = data.detail || 'Failed to update password';
-        errorEl.style.display = 'block';
-    }
-}
-
 async function apiRequest(endpoint, options = {}) {
-    const token = getToken();
-    const defaults = {
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        }
-    };
+    const method = (options.method || 'GET').toUpperCase();
+    const headers = { ...(options.headers || {}) };
+
+    if (options.json !== undefined) {
+        headers['Content-Type'] = 'application/json';
+        options.body = JSON.stringify(options.json);
+        delete options.json;
+    }
+    if (method !== 'GET' && method !== 'HEAD') {
+        headers['X-CSRF-Token'] = getCsrfToken() || '';
+    }
 
     try {
-        const res = await fetch(`${API_BASE}${endpoint}`, { ...defaults, ...options });
+        const res = await fetch(`${API_BASE}${endpoint}`, {
+            ...options,
+            headers,
+            credentials: 'same-origin'
+        });
         if (res.status === 401) {
-            logout();
+            window.location.href = '/login';
             return null;
         }
         return res;
@@ -100,20 +88,22 @@ async function apiRequest(endpoint, options = {}) {
 }
 
 // ==================== UI HELPERS ====================
-function showToast(message, type = 'success') {
-    const container = document.querySelector('.toast-container') || createToastContainer();
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(() => toast.remove(), 4000);
+function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
 }
 
-function createToastContainer() {
-    const div = document.createElement('div');
-    div.className = 'toast-container';
-    document.body.appendChild(div);
-    return div;
+function showToast(message, type = 'success') {
+    let container = document.querySelector('.toast-container');
+    if (!container) {
+        container = el('div', 'toast-container');
+        document.body.appendChild(container);
+    }
+    const toast = el('div', `toast ${type}`, message);
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
 }
 
 function showModal(id) {
@@ -124,10 +114,17 @@ function closeModal(id) {
     document.getElementById(id).classList.remove('show');
 }
 
+function makeStatusBadge(status) {
+    const badge = el('span', `status-badge ${status || 'disconnected'}`);
+    badge.appendChild(el('span', 'dot'));
+    badge.appendChild(document.createTextNode((status || 'disconnected').toUpperCase()));
+    return badge;
+}
+
 // ==================== STREAMS ====================
 async function loadStreams() {
     const res = await apiRequest('/inputs');
-    if (!res) return;
+    if (!res || !res.ok) return;
 
     const inputs = await res.json();
     for (const input of inputs) {
@@ -146,169 +143,176 @@ async function loadStreams() {
 
 function renderStreams() {
     const container = document.getElementById('streamsContainer');
+    container.replaceChildren();
 
     if (streamsData.length === 0) {
-        container.innerHTML = `
-            <div class="empty-state" style="grid-column: 1 / -1;">
-                <div class="icon">📡</div>
-                <h3>No input streams configured</h3>
-                <p>Add your first SRT input stream to get started</p>
-            </div>
-        `;
+        const empty = el('div', 'empty-state');
+        empty.style.gridColumn = '1 / -1';
+        empty.appendChild(el('div', 'icon', '📡'));
+        empty.appendChild(el('h3', null, 'No input streams configured'));
+        empty.appendChild(el('p', null, 'Add your first SRT input stream to get started'));
+        container.appendChild(empty);
         return;
     }
 
-    container.innerHTML = streamsData.map(stream => renderStreamCard(stream)).join('');
+    for (const stream of streamsData) {
+        container.appendChild(renderStreamCard(stream));
+    }
 }
 
 function renderStreamCard(stream) {
-    const statusClass = stream.status || 'disconnected';
-    const statusText = stream.status ? stream.status.toUpperCase() : 'DISCONNECTED';
-    const token = getToken();
-    const thumbnail = `/api/inputs/${stream.id}/thumbnail?t=${Date.now()}&token=${token}`;
+    const card = el('div', 'stream-card');
+    card.dataset.id = stream.id;
 
-    return `
-        <div class="stream-card" data-id="${stream.id}">
-            <div class="card-header">
-                <div class="card-title">
-                    <span class="status-badge ${statusClass}">
-                        <span class="dot"></span>
-                        ${statusText}
-                    </span>
-                    <span style="font-weight: 600; font-size: 15px;">${escapeHtml(stream.name)}</span>
-                </div>
-                <div class="card-actions">
-                    ${stream.is_active ? 
-                        `<button class="btn-stop" onclick="stopInput(${stream.id})">Stop</button>` :
-                        `<button class="btn-start" onclick="startInput(${stream.id})">Start</button>`
-                    }
-                    <input type="file" id="slate-input-${stream.id}" accept="image/*" style="display:none" onchange="uploadSlate(${stream.id}, this)">
-                    <button class="btn-icon" onclick="document.getElementById('slate-input-${stream.id}').click()" title="Upload slate">🖼</button>
-                    <button class="btn-icon" onclick="deleteSlate(${stream.id})" title="Remove slate">🚫</button>
-                    <button class="btn-icon" onclick="editInput(${stream.id})" title="Edit">✎</button>
-                    <button class="btn-icon" onclick="deleteInput(${stream.id})" title="Delete">🗑</button>
-                </div>
-            </div>
+    // ---- header ----
+    const header = el('div', 'card-header');
+    const title = el('div', 'card-title');
+    title.appendChild(makeStatusBadge(stream.status));
+    const nameEl = el('span', null, stream.name);
+    nameEl.style.cssText = 'font-weight: 600; font-size: 15px;';
+    title.appendChild(nameEl);
 
-            <div class="card-body">
-                <div class="thumbnail-container">
-                    <img src="${thumbnail}" alt="Stream preview" onerror="this.onerror=null; this.style.display='none'; this.parentElement.querySelector('.thumbnail-placeholder') || this.parentElement.insertAdjacentHTML('afterbegin', '<div class=\\'thumbnail-placeholder\\'>No preview available</div>')">
-                    <div class="thumbnail-overlay">${escapeHtml(stream.srt_url)}</div>
-                </div>
-
-                <div class="stats-grid" id="stats-${stream.id}">
-                    <div class="stat-box">
-                        <div class="value" id="bitrate-${stream.id}">-</div>
-                        <div class="label">Bitrate</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="value" id="fps-${stream.id}">-</div>
-                        <div class="label">FPS</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="value" id="speed-${stream.id}">-</div>
-                        <div class="label">Speed</div>
-                    </div>
-                </div>
-
-                <div class="outputs-section">
-                    <div class="outputs-header">
-                        <h4>Output Destinations (${stream.outputs_count || 0})</h4>
-                        <button class="btn-primary btn-small" onclick="showAddOutputModal(${stream.id})">
-                            + Add Output
-                        </button>
-                    </div>
-                    <div class="outputs-list" id="outputs-${stream.id}">
-                        ${renderOutputsList(stream.id)}
-                    </div>
-                </div>
-
-                ${stream.srt_url && stream.srt_url.toLowerCase().startsWith('srt://') ? `
-                <div class="srt-stats-section" id="srt-stats-section-${stream.id}">
-                    <div class="srt-stats-header" onclick="toggleSrtStats(${stream.id})">
-                        <span class="srt-stats-icon" id="srt-stats-icon-${stream.id}">▶</span>
-                        <h4>SRT Statistics</h4>
-                    </div>
-                    <div class="srt-stats-body" id="srt-stats-body-${stream.id}" style="display:none">
-                        <div class="srt-stats-content" id="srt-stats-${stream.id}">
-                            <div class="srt-stats-empty">Start the input to collect SRT statistics</div>
-                        </div>
-                    </div>
-                </div>
-                ` : ''}
-            </div>
-        </div>
-    `;
-}
-
-function renderOutputsList(inputId) {
-    const stream = streamsData.find(s => s.id === inputId);
-    if (!stream || !stream.outputs || stream.outputs.length === 0) {
-        return '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 16px;">No outputs configured</div>';
+    const actions = el('div', 'card-actions');
+    if (stream.is_active) {
+        const stopBtn = el('button', 'btn-stop', 'Stop');
+        stopBtn.addEventListener('click', () => stopInput(stream.id));
+        actions.appendChild(stopBtn);
+    } else {
+        const startBtn = el('button', 'btn-start', 'Start');
+        startBtn.addEventListener('click', () => startInput(stream.id));
+        actions.appendChild(startBtn);
     }
 
-    return stream.outputs.map(out => {
-        const statusClass = out.status || 'disconnected';
-        return `
-            <div class="output-item" data-id="${out.id}" title="${escapeHtml(out.srt_url)}">
-                <div class="output-info">
-                    <span class="name">${escapeHtml(out.name)}</span>
-                    <span class="mode-badge">${out.mode}</span>
-                    <span class="status-badge ${statusClass}" style="font-size: 10px; padding: 2px 8px;">
-                        <span class="dot"></span>
-                        ${(out.status || 'disconnected').toUpperCase()}
-                    </span>
-                </div>
-                <div class="output-actions">
-                    ${out.is_active ? 
-                        `<button class="btn-stop btn-small" onclick="stopOutput(${out.id})">Stop</button>` :
-                        `<button class="btn-start btn-small" onclick="startOutput(${out.id})">Start</button>`
-                    }
-                    <button class="btn-icon" onclick="editOutput(${out.id})" title="Edit">✎</button>
-                    <button class="btn-icon" onclick="deleteOutput(${out.id})" title="Delete">🗑</button>
-                </div>
-            </div>
-        `;
-    }).join('');
+    const slateInput = el('input');
+    slateInput.type = 'file';
+    slateInput.accept = 'image/*';
+    slateInput.style.display = 'none';
+    slateInput.addEventListener('change', () => uploadSlate(stream.id, slateInput));
+
+    const slateBtn = el('button', 'btn-icon', '🖼');
+    slateBtn.title = 'Upload slate';
+    slateBtn.addEventListener('click', () => slateInput.click());
+    const delSlateBtn = el('button', 'btn-icon', '🚫');
+    delSlateBtn.title = 'Remove slate';
+    delSlateBtn.addEventListener('click', () => deleteSlate(stream.id));
+    const editBtn = el('button', 'btn-icon', '✎');
+    editBtn.title = 'Edit';
+    editBtn.addEventListener('click', () => editInput(stream.id));
+    const delBtn = el('button', 'btn-icon', '🗑');
+    delBtn.title = 'Delete';
+    delBtn.addEventListener('click', () => deleteInput(stream.id));
+
+    actions.append(slateInput, slateBtn, delSlateBtn, editBtn, delBtn);
+    header.append(title, actions);
+    card.appendChild(header);
+
+    // ---- body ----
+    const body = el('div', 'card-body');
+
+    const thumbWrap = el('div', 'thumbnail-container');
+    const img = el('img');
+    img.alt = 'Stream preview';
+    // Session cookie is sent automatically; no token in the URL.
+    img.src = `/api/inputs/${stream.id}/thumbnail?t=${Date.now()}`;
+    img.addEventListener('error', () => {
+        img.style.display = 'none';
+        if (!thumbWrap.querySelector('.thumbnail-placeholder')) {
+            thumbWrap.prepend(el('div', 'thumbnail-placeholder', 'No preview available'));
+        }
+    });
+    const overlay = el('div', 'thumbnail-overlay', stream.srt_url);
+    thumbWrap.append(img, overlay);
+    body.appendChild(thumbWrap);
+
+    const statsGrid = el('div', 'stats-grid');
+    statsGrid.id = `stats-${stream.id}`;
+    for (const [key, label] of [['bitrate', 'Bitrate'], ['fps', 'FPS'], ['speed', 'Speed']]) {
+        const box = el('div', 'stat-box');
+        const value = el('div', 'value', '-');
+        value.id = `${key}-${stream.id}`;
+        box.append(value, el('div', 'label', label));
+        statsGrid.appendChild(box);
+    }
+    body.appendChild(statsGrid);
+
+    const outputsSection = el('div', 'outputs-section');
+    const outputsHeader = el('div', 'outputs-header');
+    outputsHeader.appendChild(el('h4', null, `Output Destinations (${stream.outputs_count || 0})`));
+    const addOutBtn = el('button', 'btn-primary btn-small', '+ Add Output');
+    addOutBtn.addEventListener('click', () => showAddOutputModal(stream.id));
+    outputsHeader.appendChild(addOutBtn);
+
+    const outputsList = el('div', 'outputs-list');
+    outputsList.id = `outputs-${stream.id}`;
+    renderOutputsList(stream, outputsList);
+
+    outputsSection.append(outputsHeader, outputsList);
+    body.appendChild(outputsSection);
+    card.appendChild(body);
+    return card;
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+function renderOutputsList(stream, container) {
+    container.replaceChildren();
+
+    if (!stream.outputs || stream.outputs.length === 0) {
+        const empty = el('div', null, 'No outputs configured');
+        empty.style.cssText = 'color: var(--text-muted); font-size: 13px; text-align: center; padding: 16px;';
+        container.appendChild(empty);
+        return;
+    }
+
+    for (const out of stream.outputs) {
+        const item = el('div', 'output-item');
+        item.dataset.id = out.id;
+        item.title = out.srt_url;
+
+        const info = el('div', 'output-info');
+        info.appendChild(el('span', 'name', out.name));
+        info.appendChild(el('span', 'mode-badge', out.mode));
+        info.appendChild(makeStatusBadge(out.status));
+
+        const actions = el('div', 'output-actions');
+        if (out.is_active) {
+            const stopBtn = el('button', 'btn-stop btn-small', 'Stop');
+            stopBtn.addEventListener('click', () => stopOutput(out.id));
+            actions.appendChild(stopBtn);
+        } else {
+            const startBtn = el('button', 'btn-start btn-small', 'Start');
+            startBtn.addEventListener('click', () => startOutput(out.id));
+            actions.appendChild(startBtn);
+        }
+        const editBtn = el('button', 'btn-icon', '✎');
+        editBtn.title = 'Edit';
+        editBtn.addEventListener('click', () => editOutput(out.id));
+        const delBtn = el('button', 'btn-icon', '🗑');
+        delBtn.title = 'Delete';
+        delBtn.addEventListener('click', () => deleteOutput(out.id));
+        actions.append(editBtn, delBtn);
+
+        item.append(info, actions);
+        container.appendChild(item);
+    }
 }
 
 // ==================== IMPORT / EXPORT ====================
-
 async function exportConfig() {
-    const token = getToken();
-    try {
-        const res = await fetch(`${API_BASE}/export`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (!res) return;
-        if (res.status === 401) {
-            logout();
-            return;
-        }
-        if (!res.ok) {
-            showToast('Failed to export configuration', 'error');
-            return;
-        }
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'restreamer-config.json';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(url);
-        showToast('Configuration exported');
-    } catch (err) {
-        showToast('Connection error', 'error');
+    const res = await apiRequest('/export');
+    if (!res) return;
+    if (!res.ok) {
+        showToast('Failed to export configuration', 'error');
+        return;
     }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'restreamer-config.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    showToast('Configuration exported');
 }
 
 async function importConfig(input) {
@@ -320,31 +324,22 @@ async function importConfig(input) {
         ? 'replace'
         : 'append';
 
-    const token = getToken();
     const formData = new FormData();
     formData.append('file', file);
 
-    try {
-        const res = await fetch(`${API_BASE}/import?mode=${mode}`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}` },
-            body: formData
-        });
-        if (res.status === 401) {
-            logout();
-            return;
-        }
-        if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
-            showToast(data.detail || 'Failed to import configuration', 'error');
-            return;
-        }
-        const data = await res.json();
-        showToast(`Imported ${data.created_inputs} inputs, ${data.created_outputs} outputs`);
-        loadStreams();
-    } catch (err) {
-        showToast('Connection error', 'error');
+    const res = await apiRequest(`/import?mode=${mode}`, {
+        method: 'POST',
+        body: formData
+    });
+    if (!res) return;
+    if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.detail || 'Failed to import configuration', 'error');
+        return;
     }
+    const data = await res.json();
+    showToast(`Imported ${data.created_inputs} inputs, ${data.created_outputs} outputs`);
+    loadStreams();
 }
 
 // ==================== ACTIONS ====================
@@ -381,21 +376,15 @@ async function deleteInput(id) {
 
 async function uploadSlate(id, input) {
     if (!input.files.length) return;
-    const token = getToken();
     const formData = new FormData();
     formData.append('file', input.files[0]);
-    try {
-        const res = await fetch(`${API_BASE}/inputs/${id}/slate`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}` },
-            body: formData
-        });
-        if (res && res.ok) {
-            showToast('Slate image updated');
-        } else {
-            showToast('Failed to upload slate', 'error');
-        }
-    } catch (err) {
+    const res = await apiRequest(`/inputs/${id}/slate`, {
+        method: 'POST',
+        body: formData
+    });
+    if (res && res.ok) {
+        showToast('Slate image updated');
+    } else {
         showToast('Failed to upload slate', 'error');
     }
     input.value = '';
@@ -450,26 +439,26 @@ function editOutput(id) {
 
     document.getElementById('editOutputId').value = out.id;
     document.getElementById('editOutputName').value = out.name;
-    document.getElementById('editOutputMode').value = out.mode;
     document.getElementById('editOutputUrl').value = out.srt_url;
+    document.getElementById('editOutputPassphrase').value = '';
     showModal('editOutputModal');
 }
 
 async function updateOutputStream() {
-    const id = parseInt(document.getElementById('editOutputId').value);
+    const id = parseInt(document.getElementById('editOutputId').value, 10);
     const name = document.getElementById('editOutputName').value.trim();
-    const mode = document.getElementById('editOutputMode').value;
     const url = document.getElementById('editOutputUrl').value.trim();
+    const passphrase = document.getElementById('editOutputPassphrase').value;
 
     if (!name || !url) {
         showToast('Please fill all fields', 'warning');
         return;
     }
 
-    const res = await apiRequest(`/outputs/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ name, srt_url: url, mode })
-    });
+    const payload = { name, srt_url: url };
+    if (passphrase) payload.passphrase = passphrase;
+
+    const res = await apiRequest(`/outputs/${id}`, { method: 'PUT', json: payload });
 
     if (res && res.ok) {
         showToast('Output stream updated');
@@ -485,29 +474,32 @@ async function updateOutputStream() {
 function showAddInputModal() {
     document.getElementById('inputName').value = '';
     document.getElementById('inputUrl').value = '';
+    document.getElementById('inputPassphrase').value = '';
     showModal('addInputModal');
 }
 
 async function addInputStream() {
     const name = document.getElementById('inputName').value.trim();
     const url = document.getElementById('inputUrl').value.trim();
+    const passphrase = document.getElementById('inputPassphrase').value;
 
     if (!name || !url) {
         showToast('Please fill all fields', 'warning');
         return;
     }
 
-    const res = await apiRequest('/inputs', {
-        method: 'POST',
-        body: JSON.stringify({ name, srt_url: url })
-    });
+    const payload = { name, srt_url: url };
+    if (passphrase) payload.passphrase = passphrase;
+
+    const res = await apiRequest('/inputs', { method: 'POST', json: payload });
 
     if (res && res.ok) {
         showToast('Input stream added');
         closeModal('addInputModal');
         loadStreams();
     } else {
-        showToast('Failed to add stream', 'error');
+        const err = res ? await res.json().catch(() => ({})) : {};
+        showToast(err.detail || 'Failed to add stream', 'error');
     }
 }
 
@@ -518,23 +510,25 @@ function editInput(id) {
     document.getElementById('editInputId').value = stream.id;
     document.getElementById('editInputName').value = stream.name;
     document.getElementById('editInputUrl').value = stream.srt_url;
+    document.getElementById('editInputPassphrase').value = '';
     showModal('editInputModal');
 }
 
 async function updateInputStream() {
-    const id = parseInt(document.getElementById('editInputId').value);
+    const id = parseInt(document.getElementById('editInputId').value, 10);
     const name = document.getElementById('editInputName').value.trim();
     const url = document.getElementById('editInputUrl').value.trim();
+    const passphrase = document.getElementById('editInputPassphrase').value;
 
     if (!name || !url) {
         showToast('Please fill all fields', 'warning');
         return;
     }
 
-    const res = await apiRequest(`/inputs/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ name, srt_url: url })
-    });
+    const payload = { name, srt_url: url };
+    if (passphrase) payload.passphrase = passphrase;
+
+    const res = await apiRequest(`/inputs/${id}`, { method: 'PUT', json: payload });
 
     if (res && res.ok) {
         showToast('Input stream updated');
@@ -549,41 +543,97 @@ async function updateInputStream() {
 function showAddOutputModal(inputId) {
     document.getElementById('outputInputId').value = inputId;
     document.getElementById('outputName').value = '';
-    document.getElementById('outputMode').value = 'caller';
     document.getElementById('outputUrl').value = '';
+    document.getElementById('outputPassphrase').value = '';
     showModal('addOutputModal');
 }
 
 async function addOutputStream() {
-    const inputId = parseInt(document.getElementById('outputInputId').value);
+    const inputId = parseInt(document.getElementById('outputInputId').value, 10);
     const name = document.getElementById('outputName').value.trim();
-    const mode = document.getElementById('outputMode').value;
     const url = document.getElementById('outputUrl').value.trim();
+    const passphrase = document.getElementById('outputPassphrase').value;
 
     if (!name || !url) {
         showToast('Please fill all fields', 'warning');
         return;
     }
 
-    const res = await apiRequest('/outputs', {
-        method: 'POST',
-        body: JSON.stringify({ input_stream_id: inputId, name, srt_url: url, mode })
-    });
+    const payload = { input_stream_id: inputId, name, srt_url: url };
+    if (passphrase) payload.passphrase = passphrase;
+
+    const res = await apiRequest('/outputs', { method: 'POST', json: payload });
 
     if (res && res.ok) {
         showToast('Output stream added');
         closeModal('addOutputModal');
         loadStreams();
     } else {
-        showToast('Failed to add output', 'error');
+        const err = res ? await res.json().catch(() => ({})) : {};
+        showToast(err.detail || 'Failed to add output', 'error');
+    }
+}
+
+// ==================== CHANGE PASSWORD ====================
+function showChangePasswordModal() {
+    document.getElementById('currentPassword').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('confirmPassword').value = '';
+    const errorEl = document.getElementById('changePasswordError');
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+    }
+    showModal('changePasswordModal');
+}
+
+async function changePassword() {
+    const current = document.getElementById('currentPassword').value;
+    const newPass = document.getElementById('newPassword').value;
+    const confirm = document.getElementById('confirmPassword').value;
+    const errorEl = document.getElementById('changePasswordError');
+
+    if (!current || !newPass || !confirm) {
+        errorEl.textContent = 'All fields are required';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (newPass.length < 12) {
+        errorEl.textContent = 'New password must be at least 12 characters';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (newPass === current) {
+        errorEl.textContent = 'New password must differ from the current password';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (newPass !== confirm) {
+        errorEl.textContent = 'New passwords do not match';
+        errorEl.style.display = 'block';
+        return;
+    }
+
+    const res = await apiRequest('/auth/change-password', {
+        method: 'POST',
+        json: { current_password: current, new_password: newPass }
+    });
+
+    if (res && res.ok) {
+        // All sessions are revoked server-side; return to the login page.
+        window.location.href = '/login';
+    } else {
+        const data = res ? await res.json().catch(() => ({})) : {};
+        errorEl.textContent = data.detail || 'Failed to update password';
+        errorEl.style.display = 'block';
     }
 }
 
 // ==================== WEBSOCKET ====================
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const token = getToken();
-    const wsUrl = `${protocol}//${window.location.host}/api/ws?token=${token}`;
+    // Session cookie is included automatically; no token in the URL.
+    const wsUrl = `${protocol}//${window.location.host}/api/ws`;
 
     ws = new WebSocket(wsUrl);
 
@@ -654,8 +704,7 @@ function updateStats(statsData) {
         // Update input status badge
         const inputStatusEl = document.querySelector(`.stream-card[data-id="${item.input_id}"] .status-badge`);
         if (inputStatusEl && item.input_status) {
-            inputStatusEl.className = `status-badge ${item.input_status}`;
-            inputStatusEl.innerHTML = `<span class="dot"></span>${item.input_status.toUpperCase()}`;
+            inputStatusEl.replaceWith(makeStatusBadge(item.input_status));
         }
 
         // Update output statuses
@@ -663,100 +712,46 @@ function updateStats(statsData) {
             item.outputs.forEach(out => {
                 const outEl = document.querySelector(`.output-item[data-id="${out.id}"] .status-badge`);
                 if (outEl) {
-                    outEl.className = `status-badge ${out.status}`;
-                    outEl.innerHTML = `<span class="dot"></span>${out.status.toUpperCase()}`;
+                    outEl.replaceWith(makeStatusBadge(out.status));
                 }
             });
-        }
-
-        // Update SRT statistics (render only when section is expanded to avoid churn)
-        const srtBody = document.getElementById(`srt-stats-body-${item.input_id}`);
-        if (srtBody && srtBody.style.display !== 'none' && item.input_srt_stats) {
-            renderSrtStats(item.input_id, item.input_srt_stats);
         }
     });
 }
 
-// ==================== SRT STATISTICS ====================
-
-const SRT_LABELS = {
-    state: 'State',
-    peer_version: 'Peer Version',
-    peer_endpoint: 'Peer Endpoint',
-    local_endpoint: 'Local Endpoint',
-    peer_address: 'Peer Address',
-    peer_port: 'Peer Port',
-    local_address: 'Local Address',
-    local_port: 'Local Port',
-    encryption: 'Encryption',
-    authentication: 'Authentication',
-    reconnections: 'Reconnections',
-    lost_packets: 'Lost Packets',
-    recovered_packets: 'Recovered Packets',
-    skipped_packets: 'Skipped Packets',
-    sent_acks: 'Sent ACKs',
-    sent_naks: 'Sent NAKs',
-    link_bandwidth_kbps: 'Link Bandwidth (kbps)',
-    recv_rate_mbps: 'Receive Rate (Mbps)',
-    rtt_ms: 'RTT (ms)',
-    local_buffer_ms: 'Local Buffer (ms)',
-    latency_ms: 'Latency (ms)',
-    raw_packets_received: 'Packets Received',
-    raw_packets_unique: 'Packets Unique',
-    proxy_status: 'Proxy Status',
-    proxy_message: 'Proxy Message',
-    proxy_uptime: 'Proxy Uptime (s)'
-};
-
-function toggleSrtStats(inputId) {
-    const body = document.getElementById(`srt-stats-body-${inputId}`);
-    const icon = document.getElementById(`srt-stats-icon-${inputId}`);
-    if (!body || !icon) return;
-    const isHidden = body.style.display === 'none';
-    body.style.display = isHidden ? 'block' : 'none';
-    icon.textContent = isHidden ? '▼' : '▶';
-
-    if (isHidden && lastStatsData) {
-        const item = lastStatsData.find(i => i.input_id === inputId);
-        if (item && item.input_srt_stats) {
-            renderSrtStats(inputId, item.input_srt_stats);
-        }
-    }
-}
-
-function renderSrtStats(inputId, stats) {
-    const container = document.getElementById(`srt-stats-${inputId}`);
-    if (!container) return;
-
-    if (!stats || Object.keys(stats).length === 0) {
-        container.innerHTML = '<div class="srt-stats-empty">No SRT statistics available</div>';
-        return;
-    }
-
-    const rows = Object.entries(stats)
-        .filter(([key, value]) => value !== '' && value !== null && value !== undefined)
-        .map(([key, value]) => {
-            const label = SRT_LABELS[key] || key;
-            let displayValue = value;
-            if (typeof value === 'number' && Number.isInteger(value) === false) {
-                displayValue = value.toFixed(3);
-            }
-            return `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(String(displayValue))}</td></tr>`;
-        })
-        .join('');
-
-    if (!rows) {
-        container.innerHTML = '<div class="srt-stats-empty">No SRT statistics available</div>';
-        return;
-    }
-
-    container.innerHTML = `<table class="srt-stats-table"><tbody>${rows}</tbody></table>`;
-}
-
 // ==================== INIT ====================
-document.addEventListener('DOMContentLoaded', () => {
-    if (!checkAuth()) return;
+function wireStaticHandlers() {
+    const bindings = [
+        ['btnLogout', logout],
+        ['btnChangePassword', showChangePasswordModal],
+        ['btnExportConfig', exportConfig],
+        ['btnImportConfig', () => document.getElementById('importConfigInput').click()],
+        ['btnAddInput', showAddInputModal],
+        ['btnAddInputSubmit', addInputStream],
+        ['btnEditInputSubmit', updateInputStream],
+        ['btnAddOutputSubmit', addOutputStream],
+        ['btnEditOutputSubmit', updateOutputStream],
+        ['btnChangePasswordSubmit', changePassword],
+    ];
+    for (const [id, fn] of bindings) {
+        const node = document.getElementById(id);
+        if (node) node.addEventListener('click', fn);
+    }
 
+    document.querySelectorAll('[data-close-modal]').forEach(node => {
+        node.addEventListener('click', () => closeModal(node.dataset.closeModal));
+    });
+
+    const importInput = document.getElementById('importConfigInput');
+    if (importInput) {
+        importInput.addEventListener('change', () => importConfig(importInput));
+    }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    if (!(await checkAuth())) return;
+
+    wireStaticHandlers();
     loadStreams();
     connectWebSocket();
 
