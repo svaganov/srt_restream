@@ -574,6 +574,35 @@ async function addOutputStream() {
     }
 }
 
+// ==================== SYSTEM ACTIONS ====================
+async function restartAllStreams() {
+    closeModal('restartModal');
+    const res = await apiRequest('/system/restart-streams', { method: 'POST' });
+    if (res && res.ok) {
+        const data = await res.json();
+        showToast(`Остановлено: ${data.stopped_inputs} входов, ${data.stopped_outputs} выходов. Потоки перезапускаются…`);
+        setTimeout(loadStreams, 3000);
+    } else {
+        showToast('Не удалось перезапустить потоки', 'error');
+    }
+}
+
+async function killOrphanStreams() {
+    closeModal('restartModal');
+    const res = await apiRequest('/system/kill-orphans', { method: 'POST' });
+    if (res && res.ok) {
+        const data = await res.json();
+        if (data.killed && data.killed.length > 0) {
+            showToast(`Завершено процессов-сирот: ${data.killed.length}`);
+        } else {
+            showToast('Процессов-сирот не найдено');
+        }
+        setTimeout(loadStreams, 2000);
+    } else {
+        showToast('Не удалось завершить неиспользуемые потоки', 'error');
+    }
+}
+
 // ==================== CHANGE PASSWORD ====================
 function showChangePasswordModal() {
     document.getElementById('currentPassword').value = '';
@@ -724,6 +753,9 @@ function wireStaticHandlers() {
     const bindings = [
         ['btnLogout', logout],
         ['btnChangePassword', showChangePasswordModal],
+        ['btnRestart', () => showModal('restartModal')],
+        ['btnRestartAll', restartAllStreams],
+        ['btnKillOrphans', killOrphanStreams],
         ['btnExportConfig', exportConfig],
         ['btnImportConfig', () => document.getElementById('importConfigInput').click()],
         ['btnAddInput', showAddInputModal],

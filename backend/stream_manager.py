@@ -553,6 +553,8 @@ class StreamManager:
 
         port_start = int(os.getenv("INTERNAL_PORT_START", "40000"))
         port_end = int(os.getenv("INTERNAL_PORT_END", "49999"))
+        self.allocator_start = port_start
+        self.allocator_end = port_end
         self.allocator = PortAllocator(port_start, port_end)
 
         # Desired state: what the operator asked to be running.
@@ -591,6 +593,123 @@ class StreamManager:
                 self._teardown_input_locked(sid)
             for oid in list(self._output_procs.keys()):
                 self._teardown_output_locked(oid)
+
+    # ------------------------------------------------------------------
+    # Operator actions: restart / orphan cleanup
+    # ------------------------------------------------------------------
+
+    def restart_all(self) -> dict:
+        """Tear down every runtime process; the supervisor respawns desired streams.
+
+        Desired state is preserved; backoff is reset so respawn is immediate.
+        """
+        with self._lock:
+            inputs = len(self._input_ctx)
+            outputs = len(self._output_procs)
+            for sid in list(self._input_ctx.keys()):
+                self._teardown_input_locked(sid)
+            for oid in list(self._output_procs.keys()):
+                self._teardown_output_locked(oid)
+            self._backoff.clear()
+            self._spawning.clear()
+        print(f"[SYSTEM] Restart all: stopped {inputs} inputs, {outputs} outputs; supervisor respawns desired streams")
+        return {"stopped_inputs": inputs, "stopped_outputs": outputs}
+
+    def _owned_pids(self) -> set:
+        """PIDs of every FFmpeg process currently owned by the manager."""
+        pids = set()
+        with self._lock:
+            for ctx in self._input_ctx.values():
+                for proc in (ctx.relay, ctx.slate, ctx.thumbnail):
+                    if proc and proc.process:
+                        pids.add(proc.process.pid)
+            for proc in self._output_procs.values():
+                if proc.process:
+                    pids.add(proc.process.pid)
+        return pids
+
+    def find_orphan_processes(self) -> list:
+        """FFmpeg processes that look like ours but are not owned by the manager.
+
+        A process counts as an orphan when its parent is gone AND its command
+        line matches our signatures (internal loopback ports, SRT listener
+        range, or our slate/thumbnail paths). Other applications' FFmpeg
+        processes are never matched.
+        """
+        try:
+            import psutil
+        except ImportError:
+            return []
+
+        owned = self._owned_pids()
+        listener_start, listener_end = self._listener_range()
+        orphans = []
+        for proc in psutil.process_iter(["pid", "ppid", "name", "cmdline"]):
+            try:
+                name = (proc.info["name"] or "").lower()
+                if "ffmpeg" not in name:
+                    continue
+                pid = proc.info["pid"]
+                if pid in owned:
+                    continue
+                # True orphan: parent process is gone.
+                ppid = proc.info["ppid"]
+                if ppid and psutil.pid_exists(ppid):
+                    continue
+                cmdline = " ".join(proc.info["cmdline"] or [])
+                if not self._matches_our_signature(cmdline, listener_start, listener_end):
+                    continue
+                orphans.append({"pid": pid, "cmdline": cmdline[:200]})
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return orphans
+
+    def kill_orphans(self) -> dict:
+        """Terminate orphaned FFmpeg processes left by previous app generations."""
+        try:
+            import psutil
+        except ImportError:
+            return {"killed": [], "error": "psutil not installed"}
+
+        orphans = self.find_orphan_processes()
+        killed = []
+        for item in orphans:
+            try:
+                proc = psutil.Process(item["pid"])
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except psutil.TimeoutExpired:
+                    proc.kill()
+                killed.append(item["pid"])
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        if killed:
+            print(f"[SYSTEM] Killed {len(killed)} orphan FFmpeg processes: {killed}")
+        return {"killed": killed, "found": len(orphans)}
+
+    def _listener_range(self) -> tuple:
+        rng = os.getenv("SRT_LISTENER_PORT_RANGE", "5000-5999")
+        start, end = rng.split("-", 1)
+        return int(start), int(end)
+
+    def _matches_our_signature(self, cmdline: str, listener_start: int, listener_end: int) -> bool:
+        """Conservative match: only processes that reference OUR resources."""
+        # Internal loopback media-plane ports.
+        for m in re.finditer(r"udp://127\.0\.0\.1:(\d+)", cmdline):
+            port = int(m.group(1))
+            if self.allocator_start <= port <= self.allocator_end:
+                return True
+        # SRT listener ports from the configured public range.
+        for m in re.finditer(r"srt://[^\s]*:(\d+)", cmdline):
+            port = int(m.group(1))
+            if listener_start <= port <= listener_end:
+                return True
+        # Our slate/thumbnail paths (input_N.jpg naming is app-specific).
+        normalized = cmdline.replace("\\", "/")
+        if "slates/input_" in normalized or "thumbnails/input_" in normalized:
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Paths

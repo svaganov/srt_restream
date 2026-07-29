@@ -494,6 +494,24 @@ def stop_output(output_id: int, db: Session = Depends(get_db), current_user = De
     return {"desired_state": "stopped", "message": "Output stop requested"}
 
 
+# ============ SYSTEM ACTIONS ============
+
+@router.post("/system/restart-streams", status_code=202)
+def restart_streams(current_user = Depends(get_current_user)):
+    """Stop every runtime process; the supervisor respawns desired streams."""
+    result = stream_manager.restart_all()
+    return {
+        "message": "All streams stopped; desired streams are restarting",
+        **result,
+    }
+
+
+@router.post("/system/kill-orphans", status_code=200)
+def kill_orphans(current_user = Depends(get_current_user)):
+    """Terminate orphaned FFmpeg processes left by previous app generations."""
+    return stream_manager.kill_orphans()
+
+
 # ============ SRT STATISTICS ============
 
 @router.get("/inputs/{stream_id}/srt-stats")
