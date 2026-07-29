@@ -141,31 +141,6 @@ def get_current_user_ws(
     return user
 
 
-def get_current_session(request: Request) -> Optional[UserSession]:
-    return getattr(request.state, "session", None)
-
-
-def require_csrf(request: Request) -> None:
-    """Validate CSRF token for mutating requests."""
-    session = get_current_session(request)
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="CSRF validation failed: no active session",
-        )
-    submitted = request.headers.get("x-csrf-token")
-    if not submitted:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="CSRF validation failed: missing X-CSRF-Token header",
-        )
-    if not secrets.compare_digest(submitted, session.csrf_token):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="CSRF validation failed: invalid token",
-        )
-
-
 _WS_SCHEME_MAP = {"ws": "http", "wss": "https"}
 
 
@@ -213,17 +188,6 @@ def revoke_all_user_sessions(db: Session, user_id: int) -> None:
         UserSession.user_id == user_id, UserSession.revoked.is_(False)
     ).update({"revoked": True}, synchronize_session=False)
     db.commit()
-
-
-def cleanup_expired_sessions(db: Session) -> int:
-    """Remove expired sessions. Returns number of deleted rows."""
-    result = (
-        db.query(UserSession)
-        .filter(UserSession.expires_at <= datetime.utcnow())
-        .delete(synchronize_session=False)
-    )
-    db.commit()
-    return result
 
 
 def validate_csrf_and_origin(request: Request, db: Session) -> None:

@@ -1,10 +1,10 @@
 """API Routes for SRT Restreamer"""
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from models import InputStream, OutputStream, SessionLocal, get_db, init_db
+from models import InputStream, OutputStream, SessionLocal, get_db
 from auth import (
     verify_password,
     hash_password,

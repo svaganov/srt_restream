@@ -1,5 +1,5 @@
 """Database models for SRT Restreamer"""
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Text, event
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime

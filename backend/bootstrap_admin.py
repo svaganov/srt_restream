@@ -10,7 +10,7 @@ import sys
 
 from sqlalchemy.orm import Session
 
-from auth import hash_password, verify_password, MIN_PASSWORD_LENGTH
+from auth import hash_password, MIN_PASSWORD_LENGTH
 from models import User, get_db, init_db
 
 

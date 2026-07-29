@@ -121,15 +121,3 @@ class SrtUrl(BaseModel):
                 )
 
         return obj
-
-    def with_passphrase(self, passphrase: str) -> str:
-        """Return the URL with the passphrase appended as a query parameter."""
-        sep = "&" if "?" in self.raw else "?"
-        return f"{self.raw}{sep}passphrase={passphrase}"
-
-    @property
-    def has_mode_conflict(self, explicit_mode: str | None) -> bool:
-        """True if an explicitly provided mode does not match the URL mode."""
-        if explicit_mode is None:
-            return False
-        return explicit_mode.lower() != self.mode
