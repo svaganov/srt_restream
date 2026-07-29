@@ -154,13 +154,13 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "frontend" / "static"), na
 
 @app.get("/", response_class=HTMLResponse)
 def read_root():
-    with open(BASE_DIR / "frontend" / "templates" / "index.html", "r") as f:
+    with open(BASE_DIR / "frontend" / "templates" / "index.html", "r", encoding="utf-8") as f:
         return f.read()
 
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page():
-    with open(BASE_DIR / "frontend" / "templates" / "login.html", "r") as f:
+    with open(BASE_DIR / "frontend" / "templates" / "login.html", "r", encoding="utf-8") as f:
         return f.read()
 
 
