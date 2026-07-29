@@ -63,11 +63,14 @@ class FFmpegProcess:
         self.last_activity = time.time()
         self.last_data_time: Optional[float] = None
         self.is_listener = any("mode=listener" in arg.lower() for arg in cmd)
-        # Codec profile detected from FFmpeg's "Stream #0:..." banner.
+        # Codec profile detected from FFmpeg's input "Stream #0:..." banner.
+        # FFmpeg repeats the same "Stream #0:" lines for the output banner, so
+        # counting stops once "Stream mapping:" appears.
         self.video_codec: Optional[str] = None
         self.audio_codec: Optional[str] = None
         self.video_stream_count = 0
         self.audio_stream_count = 0
+        self._streams_finalized = False
         self.stats = {
             "bitrate": "0 kb/s",
             "speed": "0x",
@@ -187,7 +190,9 @@ class FFmpegProcess:
                     self.status_message = "Stream active"
 
             # Parse stream layout for the slate compatibility check.
-            if "Stream #" in line:
+            if "Stream mapping:" in line:
+                self._streams_finalized = True
+            if "Stream #" in line and not self._streams_finalized:
                 self._parse_stream_line(line)
 
             # Detect errors
@@ -227,6 +232,10 @@ class FFmpegProcess:
         self.process = None
 
     def _parse_stream_line(self, line: str):
+        # Ignore output-banner duplicates: count only the input banner,
+        # i.e. lines printed before "Stream mapping:".
+        if self._streams_finalized:
+            return
         # Example: "Stream #0:0: Video: h264 (High) (...)" / "Stream #0:1(eng): Audio: aac"
         m = re.search(r"Stream #0:\d+.*?(Video|Audio)\s*:\s*([a-zA-Z0-9_]+)", line)
         if not m:
@@ -405,10 +414,14 @@ class UDPFeedMixer:
                             pass
                 elif sock is slate_sock:
                     if not self.live_active:
-                        try:
-                            out_sock.sendto(data, mixed_addr)
-                        except Exception:
-                            pass
+                        # Slate feeds both the outputs and the preview thumbnail,
+                        # so the dashboard shows the placeholder when the
+                        # source is gone instead of a frozen last frame.
+                        for addr in (mixed_addr, thumb_addr):
+                            try:
+                                out_sock.sendto(data, addr)
+                            except Exception:
+                                pass
 
 
 class UDPSplitter:
@@ -555,7 +568,9 @@ class StreamManager:
         self._spawning = set()
         self._generations: Dict[tuple, int] = {}
 
-        self._lock = threading.Lock()
+        # Reentrant: the supervisor loop calls _ensure_slate/_ensure_thumbnail
+        # while holding the lock, and those helpers take it again.
+        self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._supervisor_thread = threading.Thread(target=self._supervisor_loop, daemon=True)
         self._supervisor_thread.start()
@@ -903,6 +918,7 @@ class StreamManager:
             if proc.start():
                 ctx.slate = proc
                 return True
+            print(f"[SLATE] Failed to start slate for input {stream_id}: {proc.status_message}")
             return False
 
     def _stop_slate(self, stream_id: int):
@@ -1034,6 +1050,14 @@ class StreamManager:
     def _supervisor_loop(self):
         while not self._stop_event.is_set():
             time.sleep(0.5)
+            try:
+                self._supervisor_tick()
+            except Exception:
+                import traceback
+                print("[SUPERVISOR] Unhandled error (loop continues):")
+                traceback.print_exc()
+
+    def _supervisor_tick(self):
             now = time.time()
             to_spawn = []
             with self._lock:
