@@ -721,17 +721,18 @@ def import_config(
         raise HTTPException(status_code=413, detail=f"Import exceeds {MAX_IMPORT_OUTPUTS} outputs")
 
     # Validate all SRT URLs before touching the database.
-    for item in config.inputs:
-        SrtUrl.parse(item.srt_url)
-        for out_cfg in item.outputs:
-            SrtUrl.parse(out_cfg.srt_url)
-            if out_cfg.mode is not None:
+    try:
+        for item in config.inputs:
+            SrtUrl.parse(item.srt_url)
+            for out_cfg in item.outputs:
                 parsed = SrtUrl.parse(out_cfg.srt_url)
-                if parsed.mode != out_cfg.mode:
+                if out_cfg.mode is not None and parsed.mode != out_cfg.mode:
                     raise HTTPException(
                         status_code=422,
-                        detail=f"Output mode mismatch for {out_cfg.name}",
+                        detail=f"Output '{out_cfg.name}': mode '{out_cfg.mode}' conflicts with URL mode '{parsed.mode}'",
                     )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid SRT URL in import file: {e}")
 
     if mode == "replace":
         # Stop all running streams before removing them
