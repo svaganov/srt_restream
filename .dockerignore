@@ -10,8 +10,9 @@
 *.pem
 *.key
 
-# Data and runtime state
+# Data and runtime state (recursive: data dirs at any level)
 data/
+**/data/
 *.db
 *.db-journal
 *.db-wal
@@ -19,12 +20,15 @@ data/
 *.sqlite
 *.sqlite3
 
-# Python
+# Python (recursive: virtualenvs and caches at any level)
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.so
 .venv/
+**/.venv/
 venv/
+**/venv/
 env/
 *.egg-info/
 build/
@@ -63,3 +67,6 @@ pip-audit-*.log
 Dockerfile
 docker-compose*.yml
 .dockerignore
+
+# Local test artifacts
+docker-test-data/
