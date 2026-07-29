@@ -12,7 +12,7 @@ services:
     # Internal media-plane UDP ports stay on loopback inside the container.
     ports:
       - "8080:8080"
-      - "5000-5999:5000-5999/udp"
+      - "5000-10100:5000-10100/udp"
 
     volumes:
       - ./data:/app/data
@@ -23,7 +23,7 @@ services:
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set}
       - SECRETS_KEY=${SECRETS_KEY:?SECRETS_KEY must be set}
       - APP_BASE_URL=${APP_BASE_URL:-}
-      - SRT_LISTENER_PORT_RANGE=${SRT_LISTENER_PORT_RANGE:-5000-5999}
+      - SRT_LISTENER_PORT_RANGE=${SRT_LISTENER_PORT_RANGE:-5000-10100}
       - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-true}
       - UVICORN_HOST=0.0.0.0
       - UVICORN_PORT=8080

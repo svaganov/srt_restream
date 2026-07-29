@@ -41,7 +41,7 @@ def test_rejects_passphrase_in_url():
 
 def test_listener_out_of_range_rejected():
     with pytest.raises(ValueError):
-        SrtUrl.parse("srt://0.0.0.0:7000?mode=listener")
+        SrtUrl.parse("srt://0.0.0.0:10101?mode=listener")
 
 
 def test_caller_loopback_rejected():

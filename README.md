@@ -89,7 +89,7 @@ Navigate to your configured `APP_BASE_URL` (e.g. `http://localhost:8080/login`).
 | `APP_BASE_URL` | yes (prod) | Public base URL used for Origin/CSRF checks |
 | `DATABASE_URL` | no | Default `sqlite:///data/restreamer.db` |
 | `DATA_DIR` | no | Default `/app/data` (Docker) or `./data` |
-| `SRT_LISTENER_PORT_RANGE` | no | Allowed listener ports, default `5000-5999` |
+| `SRT_LISTENER_PORT_RANGE` | no | Allowed listener ports, default `5000-10100` |
 | `INTERNAL_PORT_START` / `INTERNAL_PORT_END` | no | Loopback media-plane ports, default `40000-49999` |
 | `SESSION_COOKIE_SECURE` | no | `true` in production; `false` only for local HTTP dev |
 

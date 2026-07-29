@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 from pydantic import BaseModel, field_validator
 
 
-DEFAULT_LISTENER_PORT_RANGE = "5000-5999"
+DEFAULT_LISTENER_PORT_RANGE = "5000-10100"
 INTERNAL_UDP_PORT_RANGE = "40000-49999"
 
 

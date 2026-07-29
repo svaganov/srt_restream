@@ -34,7 +34,7 @@ def test_import_valid(client, auth_headers):
 def test_import_listener_port_out_of_range_is_422(client, auth_headers):
     payload = {"version": 1, "inputs": [{
         "name": "B", "srt_url": "srt://0.0.0.0:5051?mode=listener",
-        "outputs": [{"name": "O", "srt_url": "srt://0.0.0.0:6050?mode=listener"}],
+        "outputs": [{"name": "O", "srt_url": "srt://0.0.0.0:10101?mode=listener"}],
     }]}
     r = _import(client, auth_headers, payload)
     assert r.status_code == 422
