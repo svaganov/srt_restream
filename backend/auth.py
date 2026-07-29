@@ -166,13 +166,16 @@ def require_csrf(request: Request) -> None:
         )
 
 
+_WS_SCHEME_MAP = {"ws": "http", "wss": "https"}
+
+
 def check_origin(request: Request) -> None:
     """Validate Origin/Referer for mutating and WebSocket requests."""
     origin = request.headers.get("origin") or request.headers.get("referer")
     if not origin:
         # Same-origin browser requests should always send Origin on POST etc.
         # Allow same-origin GETs without Origin.
-        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        if getattr(request, "method", None) in ("POST", "PUT", "PATCH", "DELETE"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Missing Origin/Referer header",
@@ -187,7 +190,9 @@ def check_origin(request: Request) -> None:
         expected_scheme = expected.scheme
         expected_netloc = expected.netloc
     else:
-        expected_scheme = request.url.scheme
+        # WebSocket scopes use ws:/wss: schemes while the browser Origin
+        # header is http:/https:. Compare the HTTP equivalent.
+        expected_scheme = _WS_SCHEME_MAP.get(request.url.scheme, request.url.scheme)
         expected_netloc = request.url.netloc
     if parsed.scheme != expected_scheme or parsed.netloc != expected_netloc:
         raise HTTPException(

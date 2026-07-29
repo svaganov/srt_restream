@@ -36,7 +36,19 @@ reachable from outside the host.
 
 ## Quick Start
 
-### 1. Clone & Configure
+### One command (local development)
+
+```bash
+bash start.sh        # Windows: start.bat
+```
+
+On first run this creates the virtualenv, installs dependencies, generates
+`.env` with secrets, creates the admin user (prints the password once) and
+starts the app at `http://localhost:8080/login`. Subsequent runs reuse
+everything. To set a fixed admin password, export it first:
+`ADMIN_PASSWORD='...' bash start.sh`.
+
+### 1. Clone & Configure (manual)
 
 ```bash
 git clone https://github.com/svaganov/srt_restream.git
