@@ -33,22 +33,27 @@ def test_restart_all_preserves_desired_state(tmp_path, test_env):
 
 def test_signature_matching(test_env):
     mgr = StreamManager(data_dir=str(test_env / "d2"))
+    rng = "5000-5008,6000-10100"
     try:
         # Our internal loopback port (test env allocator range is 42000-42100)
         assert mgr._matches_our_signature(
-            "ffmpeg -i udp://127.0.0.1:42003?fifo_size=1", 5000, 5999) is True
-        # Our SRT listener range
+            "ffmpeg -i udp://127.0.0.1:42003?fifo_size=1", rng) is True
+        # Our SRT listener ranges (both sub-ranges)
         assert mgr._matches_our_signature(
-            "ffmpeg -i srt://0.0.0.0:5000?mode=listener", 5000, 5999) is True
+            "ffmpeg -i srt://0.0.0.0:5000?mode=listener", rng) is True
+        assert mgr._matches_our_signature(
+            "ffmpeg -i srt://0.0.0.0:6001?mode=listener", rng) is True
         # Our slate path
         assert mgr._matches_our_signature(
-            "ffmpeg -i data\\slates\\input_1.jpg", 5000, 5999) is True
+            "ffmpeg -i data\\slates\\input_1.jpg", rng) is True
         # Foreign ffmpeg: other ports, other paths — must NOT match
         assert mgr._matches_our_signature(
-            "ffmpeg -i udp://127.0.0.1:1234 -f mpegts out.ts", 5000, 5999) is False
+            "ffmpeg -i udp://127.0.0.1:1234 -f mpegts out.ts", rng) is False
         assert mgr._matches_our_signature(
-            "ffmpeg -i srt://example.com:7000?mode=caller", 5000, 5999) is False
+            "ffmpeg -i srt://example.com:5500?mode=caller", rng) is False
         assert mgr._matches_our_signature(
-            "ffmpeg -i movie.mp4 out.mkv", 5000, 5999) is False
+            "ffmpeg -i srt://example.com:5353?mode=caller", rng) is False
+        assert mgr._matches_our_signature(
+            "ffmpeg -i movie.mp4 out.mkv", rng) is False
     finally:
         mgr.shutdown()

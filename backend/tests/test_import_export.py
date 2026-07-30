@@ -22,8 +22,8 @@ def test_export_structure_and_no_passphrases(client, auth_headers):
 
 def test_import_valid(client, auth_headers):
     payload = {"version": 1, "inputs": [{
-        "name": "Imp", "srt_url": "srt://0.0.0.0:5050?mode=listener",
-        "outputs": [{"name": "O", "srt_url": "srt://0.0.0.0:5055?mode=listener"}],
+        "name": "Imp", "srt_url": "srt://0.0.0.0:5005?mode=listener",
+        "outputs": [{"name": "O", "srt_url": "srt://0.0.0.0:6001?mode=listener"}],
     }]}
     r = _import(client, auth_headers, payload)
     assert r.status_code == 200
@@ -33,7 +33,7 @@ def test_import_valid(client, auth_headers):
 
 def test_import_listener_port_out_of_range_is_422(client, auth_headers):
     payload = {"version": 1, "inputs": [{
-        "name": "B", "srt_url": "srt://0.0.0.0:5051?mode=listener",
+        "name": "B", "srt_url": "srt://0.0.0.0:5006?mode=listener",
         "outputs": [{"name": "O", "srt_url": "srt://0.0.0.0:10101?mode=listener"}],
     }]}
     r = _import(client, auth_headers, payload)
@@ -49,8 +49,8 @@ def test_import_non_srt_scheme_is_422(client, auth_headers):
 
 def test_import_mode_conflict_is_422(client, auth_headers):
     payload = {"version": 1, "inputs": [{
-        "name": "B", "srt_url": "srt://0.0.0.0:5052?mode=listener",
-        "outputs": [{"name": "O", "srt_url": "srt://0.0.0.0:5053?mode=listener", "mode": "caller"}],
+        "name": "B", "srt_url": "srt://0.0.0.0:5007?mode=listener",
+        "outputs": [{"name": "O", "srt_url": "srt://0.0.0.0:6002?mode=listener", "mode": "caller"}],
     }]}
     r = _import(client, auth_headers, payload)
     assert r.status_code == 422

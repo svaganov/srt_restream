@@ -39,7 +39,7 @@ def test_mutating_without_csrf_rejected(client, admin_credentials):
 def test_mutating_with_csrf_ok(client, auth_headers):
     r = client.post(
         "/api/inputs",
-        json={"name": "CSRF-OK", "srt_url": "srt://0.0.0.0:5010?mode=listener"},
+        json={"name": "CSRF-OK", "srt_url": "srt://0.0.0.0:5005?mode=listener"},
         **auth_headers,
     )
     assert r.status_code == 200

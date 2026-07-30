@@ -55,6 +55,17 @@ def test_valid_listener():
     assert url.port == 5000
 
 
+def test_multi_range_listener_ports():
+    # Both sub-ranges of the default 5000-5008,6000-10100 are accepted.
+    assert SrtUrl.parse("srt://0.0.0.0:5005?mode=listener").port == 5005
+    assert SrtUrl.parse("srt://0.0.0.0:6001?mode=listener").port == 6001
+    # Ports between the sub-ranges and outside are rejected.
+    with pytest.raises(ValueError):
+        SrtUrl.parse("srt://0.0.0.0:5500?mode=listener")
+    with pytest.raises(ValueError):
+        SrtUrl.parse("srt://0.0.0.0:5353?mode=listener")
+
+
 def test_valid_caller():
     url = SrtUrl.parse("srt://remote.host:6001?mode=caller")
     assert url.mode == "caller"

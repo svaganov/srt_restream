@@ -5,18 +5,33 @@ from urllib.parse import parse_qs, urlparse
 from pydantic import BaseModel, field_validator
 
 
-DEFAULT_LISTENER_PORT_RANGE = "5000-10100"
+DEFAULT_LISTENER_PORT_RANGE = "5000-5008,6000-10100"
 INTERNAL_UDP_PORT_RANGE = "40000-49999"
 
 
-def _parse_range(rng: str):
-    start, end = rng.split("-", 1)
-    return int(start), int(end)
+def _parse_ranges(rng: str) -> list:
+    """Parse '5000-5008,6000-10100' or '5050' into [(start, end), ...]."""
+    parts = []
+    for part in rng.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, end = part.split("-", 1)
+            parts.append((int(start), int(end)))
+        else:
+            port = int(part)
+            parts.append((port, port))
+    return parts
 
 
+def port_in_ranges(port: int, rng: str) -> bool:
+    return any(start <= port <= end for start, end in _parse_ranges(rng))
+
+
+# Backward-compatible alias used inside this module.
 def _in_range(port: int, rng: str) -> bool:
-    start, end = _parse_range(rng)
-    return start <= port <= end
+    return port_in_ranges(port, rng)
 
 
 def _is_loopback(host: str) -> bool:

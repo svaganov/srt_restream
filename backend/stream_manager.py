@@ -642,7 +642,7 @@ class StreamManager:
             return []
 
         owned = self._owned_pids()
-        listener_start, listener_end = self._listener_range()
+        listener_range = self._listener_range()
         orphans = []
         for proc in psutil.process_iter(["pid", "ppid", "name", "cmdline"]):
             try:
@@ -657,7 +657,7 @@ class StreamManager:
                 if ppid and psutil.pid_exists(ppid):
                     continue
                 cmdline = " ".join(proc.info["cmdline"] or [])
-                if not self._matches_our_signature(cmdline, listener_start, listener_end):
+                if not self._matches_our_signature(cmdline, listener_range):
                     continue
                 orphans.append({"pid": pid, "cmdline": cmdline[:200]})
             except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -688,22 +688,23 @@ class StreamManager:
             print(f"[SYSTEM] Killed {len(killed)} orphan FFmpeg processes: {killed}")
         return {"killed": killed, "found": len(orphans)}
 
-    def _listener_range(self) -> tuple:
-        rng = os.getenv("SRT_LISTENER_PORT_RANGE", "5000-5999")
-        start, end = rng.split("-", 1)
-        return int(start), int(end)
+    def _listener_range(self) -> str:
+        from srt_url import DEFAULT_LISTENER_PORT_RANGE
+        return os.getenv("SRT_LISTENER_PORT_RANGE", DEFAULT_LISTENER_PORT_RANGE)
 
-    def _matches_our_signature(self, cmdline: str, listener_start: int, listener_end: int) -> bool:
+    def _matches_our_signature(self, cmdline: str, listener_range: str) -> bool:
         """Conservative match: only processes that reference OUR resources."""
+        from srt_url import port_in_ranges
+
         # Internal loopback media-plane ports.
         for m in re.finditer(r"udp://127\.0\.0\.1:(\d+)", cmdline):
             port = int(m.group(1))
             if self.allocator_start <= port <= self.allocator_end:
                 return True
-        # SRT listener ports from the configured public range.
+        # SRT listener ports from the configured public range(s).
         for m in re.finditer(r"srt://[^\s]*:(\d+)", cmdline):
             port = int(m.group(1))
-            if listener_start <= port <= listener_end:
+            if port_in_ranges(port, listener_range):
                 return True
         # Our slate/thumbnail paths (input_N.jpg naming is app-specific).
         normalized = cmdline.replace("\\", "/")
