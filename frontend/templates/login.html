@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SRT Restreamer - Login</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
+    <link rel="shortcut icon" href="/static/img/favicon.ico">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -38,6 +41,13 @@
             color: #8892b0;
             font-size: 14px;
             margin-top: 8px;
+        }
+        .logo-img-login {
+            max-width: 240px;
+            width: 100%;
+            height: auto;
+            display: inline-block;
+            border-radius: 12px;
         }
         .form-group {
             margin-bottom: 20px;
@@ -98,7 +108,7 @@
 <body>
     <div class="login-container">
         <div class="logo">
-            <h1>SRT RESTREAMER</h1>
+            <img class="logo-img-login" src="/static/img/logo.png" alt="SRT Restreamer">
             <p>Professional Stream Relay Management</p>
         </div>
         <form id="loginForm">

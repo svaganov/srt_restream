@@ -62,6 +62,13 @@ body {
     letter-spacing: 0.5px;
 }
 
+.logo-img {
+    height: 44px;
+    width: auto;
+    display: block;
+    border-radius: 8px;
+}
+
 .logo-text h1 {
     font-size: 18px;
     font-weight: 700;
