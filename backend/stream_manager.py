@@ -751,11 +751,26 @@ class StreamManager:
             "-update", "1", "-q:v", "2", thumbnail_path,
         ]
 
-    def build_slate_cmd(self, stream_id: int, slate_port: int) -> list:
-        """Generate a placeholder feed with real-time pacing."""
-        slate_image = self._slate_image_path(stream_id)
+    def _default_slate_image_path(self) -> str:
+        """App-wide default slate image, shipped with the frontend assets."""
+        return os.getenv(
+            "DEFAULT_SLATE_IMAGE",
+            str(Path(__file__).resolve().parent.parent
+                / "frontend" / "static" / "img" / "placeholder.jpg"),
+        )
 
-        if os.path.exists(slate_image):
+    def build_slate_cmd(self, stream_id: int, slate_port: int) -> list:
+        """Generate a placeholder feed with real-time pacing.
+
+        Image priority: per-input uploaded slate, then the app-wide default
+        placeholder, then a plain black frame.
+        """
+        slate_image = self._slate_image_path(stream_id)
+        if not os.path.exists(slate_image):
+            default_image = self._default_slate_image_path()
+            slate_image = default_image if os.path.exists(default_image) else None
+
+        if slate_image:
             video_input = ["-re", "-f", "image2", "-loop", "1", "-framerate", "30", "-i", slate_image]
             video_filter = "fps=30,format=yuv420p,scale=1280:720:flags=lanczos"
         else:
