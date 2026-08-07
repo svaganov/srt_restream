@@ -1206,6 +1206,8 @@ class StreamManager:
                 # the running process is torn down so the supervisor respawns it
                 # immediately on the fresh feed.
                 self._teardown_output_locked(oid)
+                desired["consumer_seen"] = False
+                desired["consumer_feed"] = None
                 backoff = self._backoff.setdefault(("output", oid), BackoffState())
                 backoff.attempt = 0
                 backoff.next_at = 0.0
@@ -1260,12 +1262,49 @@ class StreamManager:
                 # Outputs
                 for oid, desired in list(self._desired_outputs.items()):
                     proc = self._output_procs.get(oid)
+                    ctx = self._input_ctx.get(desired["stream_id"])
+                    feed = "live" if (ctx and ctx.mixer and ctx.mixer.live_active) else "slate"
                     if proc and proc.is_alive():
+                        # Consumer attach detection: first time data actually flows
+                        # to the consumer, report what feed it receives.
+                        if proc.status == "connected" and not desired.get("consumer_seen"):
+                            desired["consumer_seen"] = True
+                            event_bus.emit(
+                                "info", "output", "consumer_connected",
+                                f"Consumer connected, receiving {feed} feed",
+                                stream_id=oid, stream_name=desired.get("name"),
+                                source="system",
+                            )
+                        # Feed switched while the consumer is attached.
+                        elif proc.status == "connected" and desired.get("consumer_seen") \
+                                and desired.get("consumer_feed") is not None \
+                                and desired["consumer_feed"] != feed:
+                            desired["consumer_feed"] = feed
+                            event_bus.emit(
+                                "info", "output", "consumer_feed_changed",
+                                f"Feed switched, consumer now receives {feed} feed",
+                                stream_id=oid, stream_name=desired.get("name"),
+                                source="system",
+                            )
+                        if proc.status == "connected":
+                            desired["consumer_feed"] = feed
                         if proc.uptime() >= STABLE_UPTIME_SECONDS:
                             bs = self._backoff.get(("output", oid))
                             if bs:
                                 bs.attempt = 0
                         continue
+                    # Consumer went away: the listener either died (SRT write error
+                    # when its caller vanished) or stalled. Either way the next
+                    # consumer attach must be reported again.
+                    if desired.get("consumer_seen") and (not proc or not proc.is_alive()):
+                        desired["consumer_seen"] = False
+                        desired["consumer_feed"] = None
+                        event_bus.emit(
+                            "warning", "output", "consumer_disconnected",
+                            "Consumer disconnected",
+                            stream_id=oid, stream_name=desired.get("name"),
+                            source="system",
+                        )
                     # Idle listener restart: consumer disconnected, the FFmpeg SRT
                     # listener stopped accepting callers while the process stayed up.
                     if proc and proc.last_data_time is not None and (now - proc.last_data_time > 6.0):
