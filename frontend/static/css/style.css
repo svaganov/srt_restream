@@ -842,6 +842,13 @@ body {
     padding: 6px 10px;
 }
 
+/* The native dropdown renders with a light background on Windows —
+   force option colors so text stays readable. */
+.events-controls select option {
+    background-color: #14142b;
+    color: #fff;
+}
+
 .events-controls input {
     width: 160px;
 }
