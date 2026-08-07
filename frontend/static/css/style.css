@@ -878,14 +878,11 @@ body {
 
 .events-table td.event-time {
     color: var(--text-muted, #8892b0);
-    font-family: 'Courier New', monospace;
-    font-size: 13px;
     white-space: nowrap;
 }
 
 .events-table td.event-message {
-    font-family: 'Courier New', monospace;
-    font-size: 13px;
+    font-family: inherit;
     word-break: break-word;
 }
 

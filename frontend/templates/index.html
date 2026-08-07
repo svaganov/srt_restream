@@ -7,7 +7,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16.png">
     <link rel="shortcut icon" href="/static/img/favicon.ico">
-    <link rel="stylesheet" href="/static/css/style.css?v=18">
+    <link rel="stylesheet" href="/static/css/style.css?v=19">
 </head>
 <body>
     <div class="app">
@@ -194,6 +194,14 @@
                     <option value="error">Error</option>
                 </select>
                 <input type="text" id="eventsSearch" placeholder="Поиск…">
+                <select id="eventsFontSize" title="Размер шрифта">
+                    <option value="12">12</option>
+                    <option value="13">13</option>
+                    <option value="14" selected>14</option>
+                    <option value="16">16</option>
+                    <option value="18">18</option>
+                    <option value="20">20</option>
+                </select>
                 <button class="btn-secondary btn-small" id="btnEventsPause" type="button">Пауза</button>
                 <button class="btn-secondary btn-small" id="btnEventsClear" type="button">Очистить</button>
                 <button class="btn-close" id="btnEventsClose" type="button">&times;</button>
@@ -273,6 +281,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=18"></script>
+    <script src="/static/js/app.js?v=19"></script>
 </body>
 </html>

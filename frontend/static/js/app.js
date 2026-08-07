@@ -705,6 +705,26 @@ function toggleEventsPause() {
     document.getElementById('btnEventsPause').textContent = eventsPaused ? 'Продолжить' : 'Пауза';
 }
 
+function applyEventsFontSize(sizePx) {
+    const table = document.querySelector('.events-table');
+    if (table) table.style.fontSize = sizePx + 'px';
+    const select = document.getElementById('eventsFontSize');
+    if (select && select.value !== String(sizePx)) select.value = String(sizePx);
+}
+
+function initEventsFontSize() {
+    const saved = parseInt(localStorage.getItem('eventsFontSize') || '14', 10);
+    applyEventsFontSize(saved);
+    const select = document.getElementById('eventsFontSize');
+    if (select) {
+        select.addEventListener('change', () => {
+            const size = parseInt(select.value, 10);
+            applyEventsFontSize(size);
+            localStorage.setItem('eventsFontSize', String(size));
+        });
+    }
+}
+
 // ==================== CHANGE PASSWORD ====================
 function showChangePasswordModal() {
     document.getElementById('currentPassword').value = '';
@@ -895,6 +915,8 @@ function wireStaticHandlers() {
             node.addEventListener(id === 'eventsSearch' ? 'input' : 'change', refilterEvents);
         }
     }
+
+    initEventsFontSize();
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
