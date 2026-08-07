@@ -21,12 +21,23 @@ from auth import (
 from stream_manager import stream_manager
 from srt_url import SrtUrl
 from encryption import encrypt, decrypt
+from events import event_bus
 from datetime import datetime
 import os
 import json
 import asyncio
 
 router = APIRouter()
+
+
+def _emit_user(user, level: str, category: str, event: str, message: str,
+               stream_id=None, stream_name=None):
+    """Emit an event caused by a UI action, attributed to the operator."""
+    event_bus.emit(
+        level, category, event, message,
+        stream_id=stream_id, stream_name=stream_name,
+        source=f"user:{user.username}",
+    )
 
 
 def _session_cookie_attributes(request: Request) -> dict:
@@ -270,6 +281,8 @@ def delete_input(stream_id: int, db: Session = Depends(get_db), current_user = D
     for out in stream.outputs:
         stream_manager.stop_output(out.id)
 
+    _emit_user(current_user, "warning", "input", "stream_deleted",
+               "Input deleted with all outputs", stream_id=stream_id, stream_name=stream.name)
     db.delete(stream)
     db.commit()
     return {"message": "Deleted"}
@@ -285,15 +298,19 @@ def start_input(stream_id: int, db: Session = Depends(get_db), current_user = De
     if not stream:
         raise HTTPException(status_code=404, detail="Stream not found")
 
-    if stream_manager.start_input(stream_id, stream.srt_url, passphrase_encrypted=stream.passphrase_encrypted or None):
+    if stream_manager.start_input(stream_id, stream.srt_url, passphrase_encrypted=stream.passphrase_encrypted or None, name=stream.name):
         stream.is_active = True
         stream.desired_active = True
         stream.thumbnail_path = os.path.join(
             stream_manager.thumbnails_dir, f"input_{stream_id}.jpg"
         )
         db.commit()
+        _emit_user(current_user, "info", "input", "stream_started",
+                   "Input start requested", stream_id=stream_id, stream_name=stream.name)
         return {"desired_state": "active", "message": "Input stream start requested"}
     else:
+        _emit_user(current_user, "error", "input", "stream_failed",
+                   "Failed to start input", stream_id=stream_id, stream_name=stream.name)
         raise HTTPException(status_code=500, detail="Failed to start stream")
 
 
@@ -315,6 +332,8 @@ def stop_input(stream_id: int, db: Session = Depends(get_db), current_user = Dep
     stream.desired_active = False
     stream.thumbnail_path = ""
     db.commit()
+    _emit_user(current_user, "info", "input", "stream_stopped",
+               "Input stop requested", stream_id=stream_id, stream_name=stream.name)
     return {"desired_state": "stopped", "message": "Input stream stop requested"}
 
 
@@ -457,6 +476,8 @@ def delete_output(output_id: int, db: Session = Depends(get_db), current_user = 
         raise HTTPException(status_code=404, detail="Output not found")
 
     stream_manager.stop_output(output_id)
+    _emit_user(current_user, "warning", "output", "output_deleted",
+               "Output deleted", stream_id=output_id, stream_name=out.name)
     db.delete(out)
     db.commit()
     return {"message": "Deleted"}
@@ -472,12 +493,16 @@ def start_output(output_id: int, db: Session = Depends(get_db), current_user = D
     if not stream or not stream.is_active:
         raise HTTPException(status_code=400, detail="Input stream is not active")
 
-    if stream_manager.start_output(stream.id, output_id, out.srt_url, passphrase_encrypted=out.passphrase_encrypted or None):
+    if stream_manager.start_output(stream.id, output_id, out.srt_url, passphrase_encrypted=out.passphrase_encrypted or None, name=out.name):
         out.is_active = True
         out.desired_active = True
         db.commit()
+        _emit_user(current_user, "info", "output", "output_started",
+                   "Output start requested", stream_id=output_id, stream_name=out.name)
         return {"desired_state": "active", "message": "Output stream start requested"}
     else:
+        _emit_user(current_user, "error", "output", "stream_failed",
+                   "Failed to start output", stream_id=output_id, stream_name=out.name)
         raise HTTPException(status_code=500, detail="Failed to start output")
 
 
@@ -491,6 +516,8 @@ def stop_output(output_id: int, db: Session = Depends(get_db), current_user = De
     out.is_active = False
     out.desired_active = False
     db.commit()
+    _emit_user(current_user, "info", "output", "output_stopped",
+               "Output stop requested", stream_id=output_id, stream_name=out.name)
     return {"desired_state": "stopped", "message": "Output stop requested"}
 
 
@@ -500,6 +527,8 @@ def stop_output(output_id: int, db: Session = Depends(get_db), current_user = De
 def restart_streams(current_user = Depends(get_current_user)):
     """Stop every runtime process; the supervisor respawns desired streams."""
     result = stream_manager.restart_all()
+    _emit_user(current_user, "warning", "system", "restart_all",
+               f"Restart all: stopped {result['stopped_inputs']} inputs, {result['stopped_outputs']} outputs")
     return {
         "message": "All streams stopped; desired streams are restarting",
         **result,
@@ -509,7 +538,19 @@ def restart_streams(current_user = Depends(get_current_user)):
 @router.post("/system/kill-orphans", status_code=200)
 def kill_orphans(current_user = Depends(get_current_user)):
     """Terminate orphaned FFmpeg processes left by previous app generations."""
-    return stream_manager.kill_orphans()
+    result = stream_manager.kill_orphans()
+    killed = result.get("killed", [])
+    _emit_user(
+        current_user, "warning", "system", "orphans_killed",
+        f"Killed {len(killed)} orphan FFmpeg processes" + (f": {killed}" if killed else ""),
+    )
+    return result
+
+
+@router.get("/events")
+def get_events(limit: int = Query(200, ge=1, le=1000), current_user = Depends(get_current_user)):
+    """Most recent events for the UI events panel."""
+    return event_bus.list(limit=limit)
 
 
 # ============ SRT STATISTICS ============
@@ -575,6 +616,12 @@ async def websocket_endpoint(websocket: WebSocket):
         db.close()
 
     await websocket.accept()
+
+    # Events are queued by the bus (thread-safe) and drained on each stats tick.
+    import queue as _queue
+    event_queue: "_queue.Queue" = _queue.Queue()
+    event_bus.subscribe(event_queue.put_nowait)
+
     try:
         while True:
             # Send stats every 2 seconds
@@ -605,11 +652,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({"type": "stats", "data": data})
             finally:
                 db.close()
+
+            # Forward any queued events to the client.
+            while True:
+                try:
+                    item = event_queue.get_nowait()
+                except _queue.Empty:
+                    break
+                await websocket.send_json({"type": "event", "data": item})
+
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         pass
     except Exception as e:
         pass
+    finally:
+        event_bus.unsubscribe(event_queue.put_nowait)
 
 
 # ============ IMPORT / EXPORT ============
@@ -797,6 +855,10 @@ def import_config(
                         started_outputs += 1
         db.commit()
 
+    _emit_user(
+        current_user, "info", "system", "imported",
+        f"Config imported ({mode}): {created_inputs} inputs, {created_outputs} outputs",
+    )
     return {
         "message": "Configuration imported successfully",
         "mode": mode,

@@ -603,6 +603,108 @@ async function killOrphanStreams() {
     }
 }
 
+// ==================== EVENTS PANEL ====================
+let eventsPaused = false;
+let eventsLoaded = false;
+const EVENTS_MAX_ROWS = 1000;
+
+function openEventsPanel() {
+    document.getElementById('eventsPanel').classList.add('show');
+    if (!eventsLoaded) {
+        eventsLoaded = true;
+        loadEventsHistory();
+    }
+}
+
+function closeEventsPanel() {
+    document.getElementById('eventsPanel').classList.remove('show');
+}
+
+async function loadEventsHistory() {
+    const res = await apiRequest('/events?limit=200');
+    if (!res || !res.ok) return;
+    const items = await res.json();
+    for (const item of items) {
+        appendEventRow(item, false);
+    }
+    scrollEventsToBottom();
+}
+
+function eventMatchesFilters(item) {
+    const category = document.getElementById('eventsFilterCategory').value;
+    const level = document.getElementById('eventsFilterLevel').value;
+    const search = document.getElementById('eventsSearch').value.trim().toLowerCase();
+
+    if (category && item.category !== category) return false;
+    if (level && item.level !== level) return false;
+    if (search) {
+        const haystack = [item.message, item.event, item.source, item.stream_name]
+            .filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(search)) return false;
+    }
+    return true;
+}
+
+function appendEventRow(item, autoscroll = true) {
+    if (!eventMatchesFilters(item)) return;
+
+    const tbody = document.getElementById('eventsTableBody');
+    const tr = el('tr');
+
+    const time = el('td', 'event-time', formatEventTime(item.ts));
+
+    const levelTd = el('td');
+    levelTd.appendChild(el('span', `event-level ${item.level}`, item.level));
+
+    tr.appendChild(time);
+    tr.appendChild(levelTd);
+    tr.appendChild(el('td', null, item.category || ''));
+    tr.appendChild(el('td', null, item.stream_name || (item.stream_id != null ? `#${item.stream_id}` : '')));
+    tr.appendChild(el('td', null, item.event || ''));
+    tr.appendChild(el('td', null, item.source || ''));
+    tr.appendChild(el('td', 'event-message', item.message || ''));
+
+    tbody.appendChild(tr);
+
+    // Bound the table size.
+    while (tbody.rows.length > EVENTS_MAX_ROWS) {
+        tbody.deleteRow(0);
+    }
+
+    if (autoscroll) scrollEventsToBottom();
+}
+
+function formatEventTime(ts) {
+    try {
+        const d = new Date(ts);
+        return d.toLocaleTimeString('ru-RU', { hour12: false }) +
+            '.' + String(d.getMilliseconds()).padStart(3, '0');
+    } catch (e) {
+        return ts;
+    }
+}
+
+function scrollEventsToBottom() {
+    const body = document.getElementById('eventsBody');
+    body.scrollTop = body.scrollHeight;
+}
+
+function clearEventsView() {
+    document.getElementById('eventsTableBody').replaceChildren();
+}
+
+function refilterEvents() {
+    // Simplest correct refiltering: reload history through the filters.
+    eventsLoaded = true;
+    clearEventsView();
+    loadEventsHistory();
+}
+
+function toggleEventsPause() {
+    eventsPaused = !eventsPaused;
+    document.getElementById('btnEventsPause').textContent = eventsPaused ? 'Продолжить' : 'Пауза';
+}
+
 // ==================== CHANGE PASSWORD ====================
 function showChangePasswordModal() {
     document.getElementById('currentPassword').value = '';
@@ -675,6 +777,10 @@ function connectWebSocket() {
             const data = JSON.parse(event.data);
             if (data.type === 'stats') {
                 updateStats(data.data);
+            } else if (data.type === 'event') {
+                if (!eventsPaused && document.getElementById('eventsPanel').classList.contains('show')) {
+                    appendEventRow(data.data);
+                }
             }
         } catch (e) {
             console.error('WS parse error:', e);
@@ -756,6 +862,10 @@ function wireStaticHandlers() {
         ['btnRestart', () => showModal('restartModal')],
         ['btnRestartAll', restartAllStreams],
         ['btnKillOrphans', killOrphanStreams],
+        ['btnEvents', openEventsPanel],
+        ['btnEventsClose', closeEventsPanel],
+        ['btnEventsPause', toggleEventsPause],
+        ['btnEventsClear', clearEventsView],
         ['btnExportConfig', exportConfig],
         ['btnImportConfig', () => document.getElementById('importConfigInput').click()],
         ['btnAddInput', showAddInputModal],
@@ -777,6 +887,13 @@ function wireStaticHandlers() {
     const importInput = document.getElementById('importConfigInput');
     if (importInput) {
         importInput.addEventListener('change', () => importConfig(importInput));
+    }
+
+    for (const id of ['eventsFilterCategory', 'eventsFilterLevel', 'eventsSearch']) {
+        const node = document.getElementById(id);
+        if (node) {
+            node.addEventListener(id === 'eventsSearch' ? 'input' : 'change', refilterEvents);
+        }
     }
 }
 

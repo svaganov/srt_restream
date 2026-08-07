@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from encryption import decrypt
+from events import event_bus
 
 # Restart backoff schedule (seconds) and the uptime that resets the counter.
 BACKOFF_SCHEDULE = [1, 2, 4, 8, 16, 30]
@@ -228,6 +229,15 @@ class FFmpegProcess:
             print(f"[FFMPEG {self.stream_id}] Unexpected exit. Last stderr lines:")
             for l in self._last_stderr:
                 print(f"    {_redact_url(l)}")
+            tail = " | ".join(_redact_url(l) for l in list(self._last_stderr)[-5:])
+            event_bus.emit(
+                "error",
+                "input" if self.is_input else "output",
+                "stream_failed",
+                f"Process exited unexpectedly. {tail}" if tail else "Process exited unexpectedly",
+                stream_id=self.stream_id,
+                source="system",
+            )
 
         self.process = None
 
@@ -826,13 +836,16 @@ class StreamManager:
     # ------------------------------------------------------------------
 
     def start_input(self, stream_id: int, srt_url: str,
-                    passphrase_encrypted: Optional[str] = None) -> bool:
+                    passphrase_encrypted: Optional[str] = None,
+                    name: Optional[str] = None) -> bool:
         passphrase = decrypt(passphrase_encrypted) if passphrase_encrypted else None
 
         with self._lock:
             if stream_id in self._desired_inputs:
                 self._desired_inputs[stream_id]["generation"] = \
                     self._bump_generation_locked(("input", stream_id))
+                if name:
+                    self._desired_inputs[stream_id]["name"] = name
                 return True
 
             generation = self._bump_generation_locked(("input", stream_id))
@@ -840,6 +853,7 @@ class StreamManager:
                 "srt_url": srt_url,
                 "passphrase_encrypted": passphrase_encrypted,
                 "generation": generation,
+                "name": name,
             }
 
             # Allocate ports and bind mixer/splitter synchronously so bind
@@ -926,7 +940,8 @@ class StreamManager:
     # ------------------------------------------------------------------
 
     def start_output(self, stream_id: int, output_id: int, srt_url: str,
-                     passphrase_encrypted: Optional[str] = None) -> bool:
+                     passphrase_encrypted: Optional[str] = None,
+                     name: Optional[str] = None) -> bool:
         with self._lock:
             if stream_id not in self._input_ctx:
                 return False
@@ -936,6 +951,7 @@ class StreamManager:
                 "srt_url": srt_url,
                 "passphrase_encrypted": passphrase_encrypted,
                 "generation": generation,
+                "name": name,
             }
 
         ok = self._spawn_output(output_id, stream_id, srt_url, passphrase_encrypted)
@@ -1137,6 +1153,16 @@ class StreamManager:
     # Mixer callbacks (routed through the supervisor's desired state)
     # ------------------------------------------------------------------
 
+    def _input_name(self, stream_id: int) -> Optional[str]:
+        with self._lock:
+            desired = self._desired_inputs.get(stream_id, {})
+            return desired.get("name")
+
+    def _output_name(self, output_id: int) -> Optional[str]:
+        with self._lock:
+            desired = self._desired_outputs.get(output_id, {})
+            return desired.get("name")
+
     def _on_live_start(self, stream_id: int):
         """Live source connected: refresh outputs and re-check slate compatibility."""
         with self._lock:
@@ -1145,12 +1171,22 @@ class StreamManager:
                 if ctx.slate_available:
                     ctx.slate_available = False
                     print(f"[SLATE] Input {stream_id} is not slate-compatible, disabling slate")
+        event_bus.emit(
+            "info", "input", "live_detected",
+            "Live source connected",
+            stream_id=stream_id, stream_name=self._input_name(stream_id), source="mixer",
+        )
         self._stop_slate(stream_id)
         self._request_output_refresh(stream_id)
 
     def _on_live_lost(self, stream_id: int):
         """Live source lost: restart outputs on the slate feed and re-open the input listener."""
         print(f"[SLATE] Live lost for input {stream_id}, refreshing outputs and input listener")
+        event_bus.emit(
+            "warning", "input", "live_lost",
+            "Live source lost, switching to slate",
+            stream_id=stream_id, stream_name=self._input_name(stream_id), source="mixer",
+        )
         self._ensure_slate(stream_id)
         self._request_output_refresh(stream_id)
         with self._lock:
@@ -1276,8 +1312,14 @@ class StreamManager:
                         return
                 srt_url = desired["srt_url"]
                 passphrase_encrypted = desired.get("passphrase_encrypted")
+                attempt = self._backoff.get(("input", stream_id), BackoffState()).attempt
             passphrase = decrypt(passphrase_encrypted) if passphrase_encrypted else None
-            self._spawn_input_relay(stream_id, srt_url, passphrase)
+            ok = self._spawn_input_relay(stream_id, srt_url, passphrase)
+            event_bus.emit(
+                "info" if ok else "warning", "input", "stream_restarted",
+                f"Supervisor respawned input (attempt {attempt})" + ("" if ok else " — failed"),
+                stream_id=stream_id, stream_name=self._input_name(stream_id), source="supervisor",
+            )
         finally:
             self._spawning.discard(("input", stream_id))
 
@@ -1290,7 +1332,13 @@ class StreamManager:
                 stream_id = desired["stream_id"]
                 srt_url = desired["srt_url"]
                 passphrase_encrypted = desired.get("passphrase_encrypted")
-            self._spawn_output(output_id, stream_id, srt_url, passphrase_encrypted)
+                attempt = self._backoff.get(("output", output_id), BackoffState()).attempt
+            ok = self._spawn_output(output_id, stream_id, srt_url, passphrase_encrypted)
+            event_bus.emit(
+                "info" if ok else "warning", "output", "stream_restarted",
+                f"Supervisor respawned output (attempt {attempt})" + ("" if ok else " — failed"),
+                stream_id=output_id, stream_name=self._output_name(output_id), source="supervisor",
+            )
         finally:
             self._spawning.discard(("output", output_id))
 

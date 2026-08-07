@@ -26,6 +26,7 @@
                     <span class="dot"></span>
                     <span class="text">Connecting...</span>
                 </div>
+                <button class="btn-secondary btn-small" id="btnEvents" type="button">Events</button>
                 <button class="btn-secondary btn-small" id="btnRestart" type="button">Restart options</button>
                 <button class="btn-secondary btn-small" id="btnChangePassword" type="button">Change Password</button>
                 <button class="btn-logout" id="btnLogout" type="button">Logout</button>
@@ -175,6 +176,47 @@
         </div>
     </div>
 
+    <!-- Events Panel -->
+    <div class="events-panel" id="eventsPanel">
+        <div class="events-header">
+            <h3>События</h3>
+            <div class="events-controls">
+                <select id="eventsFilterCategory">
+                    <option value="">Все категории</option>
+                    <option value="input">Inputs</option>
+                    <option value="output">Outputs</option>
+                    <option value="system">System</option>
+                </select>
+                <select id="eventsFilterLevel">
+                    <option value="">Все уровни</option>
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="error">Error</option>
+                </select>
+                <input type="text" id="eventsSearch" placeholder="Поиск…">
+                <button class="btn-secondary btn-small" id="btnEventsPause" type="button">Пауза</button>
+                <button class="btn-secondary btn-small" id="btnEventsClear" type="button">Очистить</button>
+                <button class="btn-close" id="btnEventsClose" type="button">&times;</button>
+            </div>
+        </div>
+        <div class="events-body" id="eventsBody">
+            <table class="events-table">
+                <thead>
+                    <tr>
+                        <th>Время</th>
+                        <th>Уровень</th>
+                        <th>Категория</th>
+                        <th>Стрим</th>
+                        <th>Событие</th>
+                        <th>Источник</th>
+                        <th>Сообщение</th>
+                    </tr>
+                </thead>
+                <tbody id="eventsTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Restart Modal -->
     <div class="modal" id="restartModal">
         <div class="modal-content">
@@ -231,6 +273,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=17"></script>
+    <script src="/static/js/app.js?v=18"></script>
 </body>
 </html>
