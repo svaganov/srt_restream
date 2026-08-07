@@ -38,3 +38,4 @@ logs/
 
 # Docker
 # NOTE: .dockerignore must be tracked in git so Docker builds are reproducible.
+docker-test-data/
